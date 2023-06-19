@@ -1,0 +1,2893 @@
+
+# Lc project script for 2012 long calls
+# script for creating AKDEs and then polygons for Long call project
+library(move)
+#devtools::install_github("ctmm-initiative/ctmm")
+library(ctmm)
+library(readr)
+library(plyr)
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(purrr)
+
+#edit file that will go onto movebank to only have data from months
+# with enough location pts/individual to include in
+# occurrence distributions >50 locations/month
+Tuanan_GPS_2012 <- read_csv("Tuanan_2012_GPS_data.csv")
+as.data.frame(Tuanan_GPS_2012)
+Tuanan_GPS_2012$ID_Month<-paste(Tuanan_GPS_2012$identity, Tuanan_GPS_2012$Month)
+Tuanan_<-subset(Tuanan_GPS_2012, with(Tuanan_GPS_2012, ID_Month %in% names(which(table(ID_Month)>=25))))
+nrow(Tuanan_)
+nrow(Tuanan_GPS_2012)
+
+# need to filter dataframe to remove duplicate pts or those within 25 minutes of one another
+elapsed <- function(x)
+{
+  y <- abs(as.duration(x[2:length(x)] %--% x[1:(length(x)-1)]))
+  y >= 10*60
+}
+
+Tuanan_GPS_to_Movebank<-Tuanan_ %>%
+  group_split(ID) %>%  
+  map_dfr(~ .[c(T, if (nrow(.) > 1) elapsed(.$timestamp)),])
+str(Tuanan_GPS_to_Movebank)
+
+
+Tuanan_GPS_to_Movebank<-Tuanan_GPS_to_Movebank%>% dplyr::select('ID', 'latitude', 'longitude', 'timestamp')
+#table(is.na(Tuanan_GPS_to_Movebank$timestamp))
+strptime(Tuanan_GPS_to_Movebank$timestamp, "%Y-%m-%d %H:%M:%S")
+
+# for individual occurrence distributions
+
+Tuanan_GPS_to_occurrence<-Tuanan_GPS_to_Movebank%>% dplyr::select('id', 'latitude', 'longitude', 'timestamp')
+
+
+#write csv and add to movebank manually for ctmm
+write.csv(Tuanan_GPS_to_Movebank, file="2012 GPS ID_month.csv")
+
+
+# log into movebank for file
+# movebank contains all the GPS data and a separate file
+# named "Bornean Orangutan 2012" was batched edited to contain only that year
+login <- movebankLogin(username="llabarge", password="Samango1992!")
+
+orang_study <- getMovebankData(study="Bornean orangutan, 2011-2013", login=login)
+
+# create as.telemetry object for ctmm models
+orangs<-as.telemetry(orang_study, projection = "+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+
+#run continuous-time movement models, select the best for each individual
+# then use the best model to run autocorrelated KDEs with an error of 25m assigned
+SVF <- list()
+for(i in 1:length(orangs)){
+  print(i)
+  SVF[[i]] <- variogram(orangs[[i]])}
+names(SVF) <- names(orangs)
+plot(SVF$Wodan)
+
+## sampling duration/sample size per length of time studied too small for
+## Bobo, Tina, Kentung, Fatih, Helium, Tuko, Manggo, Jordan, Pinky, Dayak, Preman
+## fit all models together, but only use Chili, Niko, Teju, Tomi, Wodan for creating AKDEs
+
+## fit models to all animals
+# AKDEs for largest area to create available points
+#occurrance distributions for risk of encounter
+#FIT <- list()
+#for(i in 1:length(orangs)){
+#  print(i)
+#  GUESS <- ctmm.guess(orangs[[i]],CTMM=ctmm, interactive=FALSE)
+#  FIT[[i]] <- ctmm.select(orangs[[i]],GUESS, verbose=TRUE,trace=2)
+#}
+
+# extent based on Tuanan map
+library(raster)
+Tuanan_r<-raster()
+extent(Tuanan_r)<-extent(212812, 219348, 9758957, 9773670)
+res(Tuanan_r)<-25
+projection(Tuanan_r) <- "+init=epsg:32750 +proj=utm +zone=50 +units=m +south"
+
+
+#AKDE <- list()
+#for(i in 1:length(orangs)){
+#  print(i)
+#  AKDE[[i]] <- akde(orangs[[i]],FIT[[i]][[1]], grid=Tuanan_r)
+#}
+names(AKDE) <- names(orangs)
+
+
+
+# some individuals appear so infrequently that ODs are likely not representative
+# of competition risk, these are:
+#Cinta, Tina, Kentung, Fatih, Tuko, Manggo, Jordan, Pinky Luca, Dolay, Preman
+# others were not present in the study area for more than 2 months
+#in 2012: Bobo, Fayesh, Flumnmu, Fugit, Talia, Tuko
+
+# create as.telemetry object for ctmm models for monthly rasters
+OD_tel<-as.telemetry(object=Tuanan_GPS_to_Movebank, projection = "+init=epsg:32750 +proj=utm +zone=50 +units=m +south", mark.rm=TRUE)
+
+# do the same for yearly rasters
+# create as.telemetry object for ctmm models
+OD_all_2012<-as.telemetry(object=Tuanan_GPS_to_occurrence, projection = "+init=epsg:32750 +proj=utm +zone=50 +units=m +south", mark.rm=TRUE)
+
+
+#fit movement models to each OD telemetry for monthly data
+
+OD.FIT <- list()
+for(i in 1:length(OD_tel)){
+  print(i)
+  OD.GUESS <- ctmm.guess(OD_tel[[i]], CTMM=ctmm(error = 15), interactive=FALSE)
+  OD.FIT[[i]] <- ctmm.select(OD_tel[[i]],OD.GUESS, verbose=TRUE,trace=2)
+}
+
+names(OD.FIT) <- names(OD_tel)
+
+OD <- list()
+for(i in 1:length(OD_tel)){
+  print(i)
+  OD[[i]] <- occurrence(OD_tel[[i]],OD.FIT[[i]][[1]])
+}
+names(OD) <- names(OD_tel)
+
+#fit movement models to each OD telemetry for yearly
+
+OD.Year.FIT <- list()
+for(i in 1:length(OD_all_2012)){
+  print(i)
+  OD.Year.GUESS <- ctmm.guess(OD_all_2012[[i]], CTMM=ctmm(error = 15), interactive=FALSE)
+  OD.Year.FIT[[i]] <- ctmm.select(OD_all_2012[[i]],OD.Year.GUESS, verbose=TRUE,trace=2)
+}
+
+names(OD.Year.FIT) <- names(OD_all_2012)
+
+OD_all <- list()
+for(i in 1:length(OD_all_2012)){
+  print(i)
+  OD_all[[i]] <- occurrence(OD_all_2012[[i]],OD.Year.FIT[[i]][[1]])
+}
+names(OD_all) <- names(OD_all_2012)
+
+
+save(AKDE, file="akdes.Rdata")
+save(FIT, file="modFIT.Rdata")
+load(file="modFIT.Rdata")
+load(file="akdes.Rdata")
+load(file="OD.FIT.Rdata")
+save(OD.FIT, file="OD.FIT.Rdata")
+save(OD, file="OD.Rdata")
+save(OD_all, file="OD_all.Rdata")
+load(file="OD.Rdata")
+load(file="OD_all.Rdata")
+
+# create a dataframe of GPS points for "available" locations - to use later
+Avail_pts<- do.call(rbind, lapply(OD_tel, function(x) as.data.frame(x)))
+Avail_pts$ID <- rownames(Avail_pts)
+library(tm)
+removeNumbers(Avail_pts$ID)
+Avail_pts$ID<- gsub("\\..*","",Avail_pts$ID)
+
+# remove month from the end of the ID
+Avail_pts$ID <- substr(as.character(Avail_pts$ID),
+                       start= 1,
+                       stop= nchar(as.character(Avail_pts$ID) )-2 )
+count(Avail_pts$ID)
+#select males of interest (those that were range resident in 2012)
+
+Avail_pts<-Avail_pts[Avail_pts$ID %in% c("Chili","Niko","Tomi", "Teju" , "Wodan"), ]
+str(Avail_pts)
+View(Avail_pts)
+#Avail_pts<-Tuanan_GPS_to_Movebank[Tuanan_GPS_to_Movebank$identity %in% c("Chili", "Niko",  "Tomi", "Teju" , "Wodan"), ]
+PT<-rep("Available",times=1981)
+Avail_pts$PT<-PT
+
+
+# export rasters with probability distribution function as a proxy for competition risk
+# create separate per individual/year to keep track
+library(raster)
+
+#create individual raster files for competition risk / prob of
+# encounter with potential receptive females
+# use nearest OD distribution to the date of data collection
+# individuals chosen by looking at Tuanan presence records
+
+library(spatialEco)
+library(climateStability)
+ZeroRast<-Tuanan_r
+vals <- NA
+ZeroRast <- setValues(ZeroRast, vals)
+
+# create rasters for individual UDs and for competitors
+Chili<-raster(OD_all[["Chili"]] , DF="PDF")
+Chili<-raster.transformation(Chili, trans = "stretch", smin = 0, smax = 1)
+Dayak<-raster(OD_all[["Dayak"]] , DF="PDF")
+Dayak<-raster.transformation(Dayak, trans = "stretch", smin = 0, smax = 1)
+Helium<-raster(OD_all[["Helium"]] , DF="PDF")
+Helium<-raster.transformation(Helium, trans = "stretch", smin = 0, smax = 1)
+Henk<-raster(OD_all[["Henk"]] , DF="PDF")
+Henk<-raster.transformation(Henk, trans = "stretch", smin = 0, smax = 1)
+Katmandun<-raster(OD_all[["Katmandun"]] , DF="PDF")
+Katmandun<-raster.transformation(Katmandun, trans = "stretch", smin = 0, smax = 1)
+Niko<-raster(OD_all[["Niko"]] , DF="PDF")
+Niko<-raster.transformation(Niko, trans = "stretch", smin = 0, smax = 1)
+Otto<-raster(OD_all[["Otto"]] , DF="PDF")
+Otto<-raster.transformation(Otto, trans = "stretch", smin = 0, smax = 1)
+Preman<-raster(OD_all[["Preman"]] , DF="PDF")
+Preman<-raster.transformation(Preman, trans = "stretch", smin = 0, smax = 1)
+Teju<-raster(OD_all[["Teju"]] , DF="PDF")
+Teju<-raster.transformation(Teju, trans = "stretch", smin = 0, smax = 1)
+Tomi<-raster(OD_all[["Tomi"]] , DF="PDF")
+Tomi<-raster.transformation(Tomi, trans = "stretch", smin = 0, smax = 1)
+Wodan<-raster(OD_all[["Wodan"]] , DF="PDF")
+Wodan<-raster.transformation(Wodan, trans = "stretch", smin = 0, smax = 1)
+
+
+# females rasters
+Desy_rast<-raster(AKDE[["Desy"]] , DF="PDF")
+Desy_rast<-raster.transformation(Desy_rast, trans = "stretch", smin = 0, smax = 1)
+Jinak_rast<-raster(AKDE[["Jinak"]] , DF="PDF")
+Jinak_rast<-raster.transformation(Jinak_rast, trans = "stretch", smin = 0, smax = 1)
+Juni_rast<-raster(AKDE[["Juni"]] , DF="PDF")
+Juni_rast<-raster.transformation(Juni_rast, trans = "stretch", smin = 0, smax = 1)
+Inul_rast<-raster(AKDE[["Inul"]] , DF="PDF")
+Inul_rast<-raster.transformation(Inul_rast, trans = "stretch", smin = 0, smax = 1)
+Kerry_rast<-raster(AKDE[["Kerry"]] , DF="PDF")
+Kerry_rast<-raster.transformation(Kerry_rast, trans = "stretch", smin = 0, smax = 1)
+Kondor_rast<-raster(AKDE[["Kondor"]] , DF="PDF")
+Kondor_rast<-raster.transformation(Kondor_rast, trans = "stretch", smin = 0, smax = 1)
+Mindy_rast<-raster(AKDE[["Mindy"]] , DF="PDF")
+Mindy_rast<-raster.transformation(Mindy_rast, trans = "stretch", smin = 0, smax = 1)
+
+
+
+# get long call data on movebank
+login <- movebankLogin(username="llabarge", password="Samango1992!")
+##getMovebankStudies(login)
+
+##searchMovebankStudies(x="Bornean", login=login)
+
+LongCalls<-getMovebankData(study="Spontaneous Long Calls, Bornean Orangutan Flanged males 2012, Tuanan", login=login)
+
+# format long call data so can be merged as "cases" along with the
+# "control" available points
+## of these "spontaneous" long calls, 1011 came from the PAM system
+LC_tel<- as.telemetry(LongCalls, projection = "+init=epsg:32750 +proj=utm +zone=50 +south")
+
+
+LC_pts<- do.call(rbind, lapply(LC_tel, function(x) as.data.frame(x)))
+str(LC_pts)
+PT<-rep("LongCall",times=1234)
+LC_pts$PT<-PT
+
+library(stringr)
+LC_pts$ID <- rownames(LC_pts)
+unique(LC_pts$ID)
+library(tm)
+removeNumbers(LC_pts$ID)
+LC_pts$ID<- gsub("\\..*","",LC_pts$ID)
+LC_pts<-LC_pts[!grepl("Helium", LC_pts$ID),]
+LC_pts<-LC_pts[!grepl("Preman", LC_pts$ID),]
+LC_pts<-LC_pts[!grepl("Dayak", LC_pts$ID),]
+LC_points<-LC_pts[,c("x", "y", "PT", "timestamp", "ID")]
+rownames(LC_points) <- NULL
+as.data.frame(LC_points)
+
+
+# need to filter dataframe to remove duplicate pts or those within 25 minutes of one another
+elapsed <- function(x)
+{
+  y <- abs(as.duration(x[2:length(x)] %--% x[1:(length(x)-1)]))
+  y >= 25*60
+}
+
+LC_points %>%
+  group_split(ID) %>%  
+  map_dfr(~ .[c(T, if (nrow(.) > 1) elapsed(.$timestamp)),])
+
+# removes around 200 points that were part of the same event leaving 1070
+## this was because PAM system often recorded the same long calls as observation
+
+
+# add a month column (for later indexing for raster extract)
+# bind the long calls (cases) and available pts (controls) together
+
+Avail_pts$Month <- str_sub(Avail_pts$timestamp, start = 6L, end = 7L)
+LC_points$Month <- str_sub(LC_points$timestamp, start = 6L, end = 7L)
+LC_points<-LC_points[LC_points$ID %in% c("Chili","Niko","Tomi", "Teju" , "Wodan"), ]
+
+LC_com<-LC_points%>% dplyr::select('ID', 'PT', 'Month', 'x', 'y', 'timestamp')
+
+Av_com<-Avail_pts%>% dplyr::select('ID', 'PT', 'Month','x', 'y', 'timestamp')
+LC_Control<-rbind(LC_com, Av_com)
+as.data.frame(LC_Control)
+write.csv(LC_Control, file="LC_case_control.csv")
+LC_Control<-read_csv(file="LC_case_control.csv")
+
+
+
+# denote 1 for long call, 0 for available
+library(plyr)
+LC_Control$PT <- revalue(LC_Control$PT, c("LongCall"=1))
+LC_Control$PT <- revalue(LC_Control$PT, c("Available"=0))
+Chili_subset8<-LC_Control[LC_Control$ID == "Chili" & LC_Control$Month == "08", ]
+Chili_subset9<-LC_Control[LC_Control$ID == "Chili" & LC_Control$Month == "09", ]
+Chili_subset10<-LC_Control[LC_Control$ID == "Chili" & LC_Control$Month == "10", ]
+Chili_subset11<-LC_Control[LC_Control$ID == "Chili" & LC_Control$Month == "11", ]
+Niko_subset3<-LC_Control[LC_Control$ID == "Niko" & LC_Control$Month == "03", ]
+Niko_subset5<-LC_Control[LC_Control$ID == "Niko" & LC_Control$Month == "05", ]
+Niko_subset8<-LC_Control[LC_Control$ID == "Niko" & LC_Control$Month == "08", ]
+Niko_subset9<-LC_Control[LC_Control$ID == "Niko" & LC_Control$Month == "09", ]
+Niko_subset11<-LC_Control[LC_Control$ID == "Niko" & LC_Control$Month == "11", ]
+Niko_subset12<-LC_Control[LC_Control$ID == "Niko" & LC_Control$Month == "12", ]
+Teju_subset8<-LC_Control[LC_Control$ID == "Teju" & LC_Control$Month == "08", ]
+Teju_subset10<-LC_Control[LC_Control$ID == "Teju" & LC_Control$Month == "10", ]
+Teju_subset11<-LC_Control[LC_Control$ID == "Teju" & LC_Control$Month == "11", ]
+Teju_subset12<-LC_Control[LC_Control$ID == "Teju" & LC_Control$Month == "12", ]
+Tomi_subset3<-LC_Control[LC_Control$ID == "Tomi" & LC_Control$Month == "03", ]
+Tomi_subset4<-LC_Control[LC_Control$ID == "Tomi" & LC_Control$Month == "04", ]
+Tomi_subset5<-LC_Control[LC_Control$ID == "Tomi" & LC_Control$Month == "05", ]
+Tomi_subset6<-LC_Control[LC_Control$ID == "Tomi" & LC_Control$Month == "06", ]
+Tomi_subset7<-LC_Control[LC_Control$ID == "Tomi" & LC_Control$Month == "07", ]
+Tomi_subset8<-LC_Control[LC_Control$ID == "Tomi" & LC_Control$Month == "08", ]
+Tomi_subset9<-LC_Control[LC_Control$ID == "Tomi" & LC_Control$Month == "09", ]
+Tomi_subset10<-LC_Control[LC_Control$ID == "Tomi" & LC_Control$Month == "10", ]
+Tomi_subset11<-LC_Control[LC_Control$ID == "Tomi" & LC_Control$Month == "11", ]
+Tomi_subset12<-LC_Control[LC_Control$ID == "Tomi" & LC_Control$Month == "12", ]
+Wodan_subset3<-LC_Control[LC_Control$ID == "Wodan" & LC_Control$Month == "03", ]
+Wodan_subset4<-LC_Control[LC_Control$ID == "Wodan" & LC_Control$Month == "04", ]
+Wodan_subset5<-LC_Control[LC_Control$ID == "Wodan" & LC_Control$Month == "05", ]
+Wodan_subset6<-LC_Control[LC_Control$ID == "Wodan" & LC_Control$Month == "06", ]
+Wodan_subset7<-LC_Control[LC_Control$ID == "Wodan" & LC_Control$Month == "07", ]
+Wodan_subset8<-LC_Control[LC_Control$ID == "Wodan" & LC_Control$Month == "08", ]
+Wodan_subset9<-LC_Control[LC_Control$ID == "Wodan" & LC_Control$Month == "09", ]
+Wodan_subset10<-LC_Control[LC_Control$ID == "Wodan" & LC_Control$Month == "10", ]
+Wodan_subset11<-LC_Control[LC_Control$ID == "Wodan" & LC_Control$Month == "11", ]
+Wodan_subset12<-LC_Control[LC_Control$ID == "Wodan" & LC_Control$Month == "12", ]
+
+# create monthly long call occurrence distributions by using long call data and creating an ID_date column
+# download previously month-separated data from movebank and fit movement models and ODs
+
+library(move)
+library(ctmm)
+LC_to_df<-getMovebankData(study="Long Calls, Bornean Orangutan, Pongo pygmaeus, Tuanan, Central Kalimatan, Indonesia", login=login)
+LC_to_df<-as.telemetry(LC_to_df, projection = "+init=epsg:32750 +proj=utm +zone=50 +south")
+LC_df<- do.call(rbind, lapply(LC_to_df, function(x) as.data.frame(x)))
+head(LC_df)
+
+library(stringr)
+LC_df$ID <- rownames(LC_df)
+library(tm)
+removeNumbers(LC_df$ID)
+LC_df$ID<- gsub("\\..*","",LC_df$ID)
+LC_df$ID<- gsub("LC","",LC_df$ID)
+LC_df$month <- format(LC_df$timestamp, "%m")
+LC_df$year <- format(LC_df$timestamp, "%y")
+rownames(LC_df)<-NULL
+
+#column for ID_date to make monthly occurrence distributions
+LC_df$ID_date<-gsub(" ", "", paste(LC_df$ID,"_", LC_df$month))
+LC_<-subset(LC_df, year == "12")
+
+LC_to_<-LC_[LC_$longitude >= "113.0" & LC_$longitude <= "115.0",]
+# need to filter dataframe to remove duplicate pts or those within 25 minutes of one another
+
+elapsed <- function(x)
+{
+  y <- abs(as.duration(x[2:length(x)] %--% x[1:(length(x)-1)]))
+  y >= 10*60
+}
+
+LC_to_movebank<-LC_to_ %>%
+  group_split(ID_date) %>%  
+  map_dfr(~ .[c(T, if (nrow(.) > 1) elapsed(.$timestamp)),])
+
+# remove monthly data with less than 10 observations
+LC_to_movebank<-LC_to_movebank[with(LC_to_movebank, ID_date %in% names(which(table(ID_date)>=10))), ]
+str(LC_to_movebank)
+#select only variables needed for Movebank
+
+LC_to_movebank$Timestamp<-LC_to_movebank$timestamp
+LC_to_movebank$id<-LC_to_movebank$ID_date
+
+LC_movebank<-LC_to_movebank%>% dplyr::select('id', 'latitude', 'longitude', 'Timestamp')
+rownames(LC_movebank) <- NULL
+LongCalls_to_movebank<-as.data.frame(LC_movebank)
+head(LongCalls_to_movebank)
+
+# write txt to upload to movebank
+#write.csv(LongCalls_to_movebank, file="LongCalls_to_movebank.txt")
+LongCalls_to_movebank<-read.csv(file="LongCalls_to_movebank.txt")
+LongCalls_Monthly<-as.telemetry(object=LongCalls_to_movebank, projection = "+init=epsg:32750 +proj=utm +zone=50 +south")
+
+# monthly long call occurrence distributions - represents competitive risk
+# may be more accurrate than AKDEs/ODs of competitor risk
+#LC.FIT <- list()
+#for(i in 1:length(LongCalls_Monthly)){
+#  print(i)
+#  LC.GUESS <- ctmm.guess(LongCalls_Monthly[[i]], interactive=FALSE)
+#  LC.FIT[[i]] <- ctmm.select(LongCalls_Monthly[[i]],LC.GUESS, verbose=TRUE,trace=2)
+#}
+
+#names(LC.FIT) <- names(LongCalls_Monthly)
+
+#LC_Monthly <- list()
+#for(i in 1:length(LongCalls_Monthly)){
+#  print(i)
+#  LC_Monthly[[i]] <- occurrence(LongCalls_Monthly[[i]],LC.FIT[[i]][[1]])}
+
+
+#save(LC_Monthly, file="LC_Monthly.Rdata")
+
+load(file="LC_Monthly.Rdata")
+names(LC_Monthly) <- names(LongCalls_Monthly)
+
+
+# create rasters of each of these
+library(spatialEco)
+library(raster)
+
+
+#March
+Henk_03_LC<-raster(LC_Monthly[["Henk_03"]] , DF="PDF")
+Henk_03_LC<-raster.transformation(Henk_03_LC, trans = "stretch", smin = 0, smax = 1)
+Niko_03_LC<-raster(LC_Monthly[["Niko_03"]] , DF="PDF")
+Niko_03_LC<-raster.transformation(Niko_03_LC, trans = "stretch", smin = 0, smax = 1)
+Otto_03_LC<-raster(LC_Monthly[["Otto_03"]] , DF="PDF")
+Otto_03_LC<-raster.transformation(Otto_03_LC, trans = "stretch", smin = 0, smax = 1)
+Tomi_03_LC<-raster(LC_Monthly[["Tomi_03"]] , DF="PDF")
+Tomi_03_LC<-raster.transformation(Tomi_03_LC, trans = "stretch", smin = 0, smax = 1)
+Wodan_03_LC<-raster(LC_Monthly[["Wodan_03"]] , DF="PDF")
+Wodan_03_LC<-raster.transformation(Wodan_03_LC, trans = "stretch", smin = 0, smax = 1)
+
+#April
+Katmandun_04_LC<-raster(LC_Monthly[["Katmandun_04"]], DF="PDF")
+Katmandun_04_LC<-raster.transformation(Katmandun_04_LC, trans = "stretch", smin = 0, smax = 1)
+Tomi_04_LC<-raster(LC_Monthly[["Tomi_04"]], DF="PDF")
+Tomi_04_LC<-raster.transformation(Tomi_04_LC, trans = "stretch", smin = 0, smax = 1)
+Wodan_04_LC<-raster(LC_Monthly[["Wodan_04"]] , DF="PDF")
+Wodan_04_LC<-raster.transformation(Wodan_04_LC, trans = "stretch", smin = 0, smax = 1)
+
+#May
+Niko_05_LC<-raster(LC_Monthly[["Niko_05"]], DF="PDF")
+Niko_05_LC<-raster.transformation(Niko_05_LC, trans = "stretch", smin = 0, smax = 1)
+Tomi_05_LC<-raster(LC_Monthly[["Tomi_05"]], DF="PDF")
+Tomi_05_LC<-raster.transformation(Tomi_05_LC, trans = "stretch", smin = 0, smax = 1)
+Wodan_05_LC<-raster(LC_Monthly[["Wodan_05"]], DF="PDF")
+Wodan_05_LC<-raster.transformation(Wodan_05_LC, trans = "stretch", smin = 0, smax = 1)
+
+#June
+Dayak_06_LC<-raster(LC_Monthly[["Dayak_06"]], DF="PDF")
+Dayak_06_LC<-raster.transformation(Dayak_06_LC, trans = "stretch", smin = 0, smax = 1)
+Henk_06_LC<-raster(LC_Monthly[["Henk_06"]], DF="PDF")
+Henk_06_LC<-raster.transformation(Henk_06_LC, trans = "stretch", smin = 0, smax = 1)
+Katmandun_06_LC<-raster(LC_Monthly[["Katmandun_06"]], DF="PDF")
+Katmandun_06_LC<-raster.transformation(Katmandun_06_LC, trans = "stretch", smin = 0, smax = 1)
+Wodan_06_LC<-raster(LC_Monthly[["Wodan_06"]], DF="PDF")
+Wodan_06_LC<-raster.transformation(Wodan_06_LC, trans = "stretch", smin = 0, smax = 1)
+
+
+#July
+Henk_07_LC<-raster(LC_Monthly[["Henk_07"]], DF="PDF")
+Henk_07_LC<-raster.transformation(Henk_07_LC, trans = "stretch", smin = 0, smax = 1)
+Tomi_07_LC<-raster(LC_Monthly[["Tomi_07"]], DF="PDF")
+Tomi_07_LC<-raster.transformation(Tomi_07_LC, trans = "stretch", smin = 0, smax = 1)
+Wodan_07_LC<-raster(LC_Monthly[["Wodan_07"]], DF="PDF")
+Wodan_07_LC<-raster.transformation(Wodan_07_LC, trans = "stretch", smin = 0, smax = 1)
+
+
+#August
+Chili_08_LC<-raster(LC_Monthly[["Chili_08"]] , DF="PDF")
+Chili_08_LC<-raster.transformation(Chili_08_LC, trans = "stretch", smin = 0, smax = 1)
+Henk_08_LC<-raster(LC_Monthly[["Henk_08"]] , DF="PDF")
+Henk_08_LC<-raster.transformation(Henk_08_LC, trans = "stretch", smin = 0, smax = 1)
+Niko_08_LC<-raster(LC_Monthly[["Niko_08"]] , DF="PDF")
+Niko_08_LC<-raster.transformation(Niko_08_LC, trans = "stretch", smin = 0, smax = 1)
+Otto_08_LC<-raster(LC_Monthly[["Otto_08"]] , DF="PDF")
+Otto_08_LC<-raster.transformation(Otto_08_LC, trans = "stretch", smin = 0, smax = 1)
+Teju_08_LC<-raster(LC_Monthly[["Teju_08"]], DF="PDF")
+Teju_08_LC<-raster.transformation(Teju_08_LC, trans = "stretch", smin = 0, smax = 1)
+Wodan_08_LC<-raster(LC_Monthly[["Wodan_08"]], DF="PDF")
+Wodan_08_LC<-raster.transformation(Wodan_08_LC, trans = "stretch", smin = 0, smax = 1)
+
+#september
+Chili_09_LC<-raster(LC_Monthly[["Chili_09"]] , DF="PDF")
+Chili_09_LC<-raster.transformation(Chili_09_LC, trans = "stretch", smin = 0, smax = 1)
+Dayak_09_LC<-raster(LC_Monthly[["Dayak_09"]], DF="PDF")
+Dayak_09_LC<-raster.transformation(Dayak_09_LC, trans = "stretch", smin = 0, smax = 1)
+Helium_09_LC<-raster(LC_Monthly[["Helium_09"]], DF="PDF")
+Helium_09_LC<-raster.transformation(Helium_09_LC, trans = "stretch", smin = 0, smax = 1)
+Henk_09_LC<-raster(LC_Monthly[["Henk_09"]], DF="PDF")
+Henk_09_LC<-raster.transformation(Henk_09_LC, trans = "stretch", smin = 0, smax = 1)
+Niko_09_LC<-raster(LC_Monthly[["Niko_09"]], DF="PDF")
+Niko_09_LC<-raster.transformation(Niko_09_LC, trans = "stretch", smin = 0, smax = 1)
+Tomi_09_LC<-raster(LC_Monthly[["Tomi_09"]], DF="PDF")
+Tomi_09_LC<-raster.transformation(Tomi_09_LC, trans = "stretch", smin = 0, smax = 1)
+Wodan_09_LC<-raster(LC_Monthly[["Wodan_09"]], DF="PDF")
+Wodan_09_LC<-raster.transformation(Wodan_09_LC, trans = "stretch", smin = 0, smax = 1)
+
+#October
+Chili_10_LC<-raster(LC_Monthly[["Chili_10"]]  , DF="PDF")
+Chili_10_LC<-raster.transformation(Chili_10_LC, trans = "stretch", smin = 0, smax = 1)
+Dayak_10_LC<-raster(LC_Monthly[["Dayak_10"]], DF="PDF")
+Dayak_10_LC<-raster.transformation(Dayak_10_LC, trans = "stretch", smin = 0, smax = 1)
+Helium_10_LC<-raster(LC_Monthly[["Helium_10"]], DF="PDF")
+Helium_10_LC<-raster.transformation(Helium_10_LC, trans = "stretch", smin = 0, smax = 1)
+Henk_10_LC<-raster(LC_Monthly[["Henk_10"]], DF="PDF")
+Henk_10_LC<-raster.transformation(Henk_10_LC, trans = "stretch", smin = 0, smax = 1)
+Teju_10_LC<-raster(LC_Monthly[["Teju_10"]], DF="PDF")
+Teju_10_LC<-raster.transformation(Teju_10_LC, trans = "stretch", smin = 0, smax = 1)
+Tomi_10_LC<-raster(LC_Monthly[["Tomi_10"]], DF="PDF")
+Tomi_10_LC<-raster.transformation(Tomi_10_LC, trans = "stretch", smin = 0, smax = 1)
+Wodan_10_LC<-raster(LC_Monthly[["Wodan_10"]], DF="PDF")
+Wodan_10_LC<-raster.transformation(Wodan_10_LC, trans = "stretch", smin = 0, smax = 1)
+
+#November
+Chili_11_LC<-raster(LC_Monthly[["Chili_11"]]  , DF="PDF")
+Chili_11_LC<-raster.transformation(Chili_11_LC, trans = "stretch", smin = 0, smax = 1)
+Dayak_11_LC<-raster(LC_Monthly[["Dayak_11"]]  , DF="PDF")
+Dayak_11_LC<-raster.transformation(Dayak_11_LC, trans = "stretch", smin = 0, smax = 1)
+Helium_11_LC<-raster(LC_Monthly[["Helium_11"]]  , DF="PDF")
+Helium_11_LC<-raster.transformation(Helium_11_LC, trans = "stretch", smin = 0, smax = 1)
+Niko_11_LC<-raster(LC_Monthly[["Niko_11"]]  , DF="PDF")
+Niko_11_LC<-raster.transformation(Niko_11_LC, trans = "stretch", smin = 0, smax = 1)
+Preman_11_LC<-raster(LC_Monthly[["Preman_11"]] , DF="PDF")
+Preman_11_LC<-raster.transformation(Preman_11_LC, trans = "stretch", smin = 0, smax = 1)
+Teju_11_LC<-raster(LC_Monthly[["Teju_11"]], DF="PDF")
+Teju_11_LC<-raster.transformation(Teju_11_LC, trans = "stretch", smin = 0, smax = 1)
+Tomi_11_LC<-raster(LC_Monthly[["Tomi_11"]], DF="PDF")
+Tomi_11_LC<-raster.transformation(Tomi_11_LC, trans = "stretch", smin = 0, smax = 1)
+Wodan_11_LC<-raster(LC_Monthly[["Wodan_11"]], DF="PDF")
+Wodan_11_LC<-raster.transformation(Wodan_11_LC, trans = "stretch", smin = 0, smax = 1)
+
+#December
+Dayak_12_LC<-raster(LC_Monthly[["Dayak_12"]]  , DF="PDF")
+Dayak_12_LC<-raster.transformation(Dayak_12_LC, trans = "stretch", smin = 0, smax = 1)
+Henk_12_LC<-raster(LC_Monthly[["Henk_12"]], DF="PDF")
+Henk_12_LC<-raster.transformation(Henk_12_LC, trans = "stretch", smin = 0, smax = 1)
+Niko_12_LC<-raster(LC_Monthly[["Niko_12"]]  , DF="PDF")
+Niko_12_LC<-raster.transformation(Niko_12_LC, trans = "stretch", smin = 0, smax = 1)
+Preman_12_LC<-raster(LC_Monthly[["Preman_12"]] , DF="PDF")
+Preman_12_LC<-raster.transformation(Preman_12_LC, trans = "stretch", smin = 0, smax = 1)
+Teju_12_LC<-raster(LC_Monthly[["Teju_12"]], DF="PDF")
+Teju_12_LC<-raster.transformation(Teju_12_LC, trans = "stretch", smin = 0, smax = 1)
+Tomi_12_LC<-raster(LC_Monthly[["Tomi_12"]], DF="PDF")
+Tomi_12_LC<-raster.transformation(Tomi_12_LC, trans = "stretch", smin = 0, smax = 1)
+Wodan_12_LC<-raster(LC_Monthly[["Wodan_12"]], DF="PDF")
+Wodan_12_LC<-raster.transformation(Wodan_12_LC, trans = "stretch", smin = 0, smax = 1)
+
+
+# create spatial points data frames to extract from specific rasters
+#Chili
+library(sp)
+Chili<-raster(AKDE[["Chili"]] , DF="PDF")
+Chili_Own<-raster.transformation(Chili, trans = "stretch", smin = 0, smax = 1)
+sp::plot(Chili)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Chili in August 2012
+xy <- Chili_subset8[,c("x","y")]
+Chili_subset8_sp <- SpatialPointsDataFrame(coords = xy, data = Chili_subset8, proj4string = CRS)
+Chili_Own <- raster::extract(Chili_Own, Chili_subset8_sp[,c("x", "y")])
+Chili_Dayak<-raster::extract(ZeroRast, Chili_subset8_sp[,c("x", "y")])
+Chili_Helium<-raster::extract(ZeroRast, Chili_subset8_sp[,c("x", "y")])
+Chili_Henk<-raster::extract(Henk, Chili_subset8_sp[,c("x", "y")])
+Chili_Niko<-raster::extract(ZeroRast, Chili_subset8_sp[,c("x", "y")])
+Chili_Preman<-raster::extract(ZeroRast, Chili_subset8_sp[,c("x", "y")])
+Chili_Otto<-raster::extract(Otto, Chili_subset8_sp[,c("x", "y")])
+Chili_Katmandun<-raster::extract(ZeroRast, Chili_subset8_sp[,c("x", "y")])
+Chili_Teju<-raster::extract(ZeroRast, Chili_subset8_sp[,c("x", "y")])
+Chili_Tomi<-raster::extract(Tomi, Chili_subset8_sp[,c("x", "y")])
+Chili_Wodan<-raster::extract(Wodan, Chili_subset8_sp[,c("x", "y")])
+Chili_Juni<-raster::extract(Juni_rast, Chili_subset8_sp[,c("x", "y")])
+Chili_Inul<-raster::extract(Inul_rast, Chili_subset8_sp[,c("x", "y")])
+Chili_Kerry <-raster::extract(Kerry_rast, Chili_subset8_sp[,c("x", "y")])
+Chili_Mindy <-raster::extract(Mindy_rast, Chili_subset8_sp[,c("x", "y")])
+Dayak_08_LC<-raster::extract(ZeroRast, Chili_subset8_sp[,c("x", "y")])
+Helium_08_LC<-raster::extract(ZeroRast, Chili_subset8_sp[,c("x", "y")])
+Henk_08_LC<-raster::extract(Henk_08_LC, Chili_subset8_sp[,c("x", "y")])
+Katmandun_08_LC<-raster::extract(ZeroRast, Chili_subset8_sp[,c("x", "y")])
+Niko_08_LC<-raster::extract(Niko_08_LC, Chili_subset8_sp[,c("x", "y")])
+Otto_08_LC<-raster::extract(Otto_08_LC, Chili_subset8_sp[,c("x", "y")])
+Preman_08_LC<-raster::extract(ZeroRast, Chili_subset8_sp[,c("x", "y")])
+Teju_08_LC<-raster::extract(Teju_08_LC, Chili_subset8_sp[,c("x", "y")])
+Tomi_08_LC<-raster::extract(ZeroRast, Chili_subset8_sp[,c("x", "y")])
+Wodan_08_LC<-raster::extract(Wodan_08_LC, Chili_subset8_sp[,c("x", "y")])
+Chili_8<-cbind(Chili_subset8_sp, Chili_Own, Chili_Dayak, Chili_Helium, Chili_Henk, Chili_Niko, Chili_Preman, Chili_Otto, Chili_Katmandun, Chili_Teju, Chili_Tomi, Chili_Wodan, Chili_Juni, Chili_Inul, Chili_Kerry, Chili_Mindy,Dayak_08_LC, Helium_08_LC, Henk_08_LC,Katmandun_08_LC, Niko_08_LC,Otto_08_LC , Preman_08_LC, Teju_08_LC, Tomi_08_LC, Wodan_08_LC)
+as.data.frame(Chili_8)
+names(Chili_8)[8] <- "Own"
+names(Chili_8)[9] <- "Dayak"
+names(Chili_8)[10] <- "Helium"
+names(Chili_8)[11] <- "Henk"
+names(Chili_8)[12] <- "Niko"
+names(Chili_8)[13] <- "Preman"
+names(Chili_8)[14] <- "Otto"
+names(Chili_8)[15] <- "Katmandun"
+names(Chili_8)[16] <- "Teju"
+names(Chili_8)[17] <- "Tomi"
+names(Chili_8)[18] <- "Wodan"
+names(Chili_8)[19] <- "Juni"
+names(Chili_8)[20] <- "Inul"
+names(Chili_8)[21] <- "Kerry"
+names(Chili_8)[22] <- "Mindy"
+names(Chili_8)[23]<-"Dayak_LC"
+names(Chili_8)[24]<-"Helium_LC"
+names(Chili_8)[25]<-"Henk_LC"
+names(Chili_8)[26]<-"Katmandun_LC"
+names(Chili_8)[27]<-"Niko_LC"
+names(Chili_8)[28]<-"Otto_LC"
+names(Chili_8)[29]<-"Preman_LC"
+names(Chili_8)[30]<-"Teju_LC"
+names(Chili_8)[31]<-"Tomi_LC"
+names(Chili_8)[32]<-"Wodan_LC"
+Chili_8<-as.data.frame(Chili_8@data)
+View(Chili_8)
+
+
+#chili september
+Chili<-raster(AKDE[["Chili"]] , DF="PDF")
+Chili_Own<-raster.transformation(Chili, trans = "stretch", smin = 0, smax = 1)
+sp::plot(Chili)
+sp::plot(Chili_Own)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Chili in August 2012
+xy <- Chili_subset9[,c("x","y")]
+Chili_subset9_sp <- SpatialPointsDataFrame(coords = xy, data = Chili_subset9, proj4string = CRS)
+Chili_Own <- raster::extract(Chili_Own, Chili_subset9_sp[,c("x", "y")])
+Chili_Dayak<-raster::extract(ZeroRast, Chili_subset9_sp[,c("x", "y")])
+Chili_Helium<-raster::extract(ZeroRast, Chili_subset9_sp[,c("x", "y")])
+Chili_Henk<-raster::extract(Henk, Chili_subset9_sp[,c("x", "y")])
+Chili_Niko<-raster::extract(ZeroRast, Chili_subset9_sp[,c("x", "y")])
+Chili_Preman<-raster::extract(ZeroRast, Chili_subset9_sp[,c("x", "y")])
+Chili_Otto<-raster::extract(Otto, Chili_subset9_sp[,c("x", "y")])
+Chili_Katmandun<-raster::extract(ZeroRast, Chili_subset9_sp[,c("x", "y")])
+Chili_Teju<-raster::extract(ZeroRast, Chili_subset9_sp[,c("x", "y")])
+Chili_Tomi<-raster::extract(Tomi, Chili_subset9_sp[,c("x", "y")])
+Chili_Wodan<-raster::extract(Wodan, Chili_subset9_sp[,c("x", "y")])
+Chili_Juni<-raster::extract(Juni_rast, Chili_subset9_sp[,c("x", "y")])
+Chili_Inul<-raster::extract(Inul_rast, Chili_subset9_sp[,c("x", "y")])
+Chili_Kerry <-raster::extract(Kerry_rast, Chili_subset9_sp[,c("x", "y")])
+Chili_Mindy <-raster::extract(Mindy_rast, Chili_subset9_sp[,c("x", "y")])
+Dayak_09_LC<-raster::extract(Dayak_09_LC, Chili_subset9_sp[,c("x", "y")])
+Helium_09_LC<-raster::extract(Helium_09_LC, Chili_subset9_sp[,c("x", "y")])
+Henk_09_LC<-raster::extract(Henk_09_LC, Chili_subset9_sp[,c("x", "y")])
+Katmandun_09_LC<-raster::extract(ZeroRast, Chili_subset9_sp[,c("x", "y")])
+Niko_09_LC<-raster::extract(Niko_09_LC, Chili_subset9_sp[,c("x", "y")])
+Otto_09_LC<-raster::extract(ZeroRast, Chili_subset9_sp[,c("x", "y")])
+Preman_09_LC<-raster::extract(ZeroRast, Chili_subset9_sp[,c("x", "y")])
+Teju_09_LC<-raster::extract(ZeroRast, Chili_subset9_sp[,c("x", "y")])
+Tomi_09_LC<-raster::extract(Tomi_09_LC, Chili_subset9_sp[,c("x", "y")])
+Wodan_09_LC<-raster::extract(Wodan_09_LC, Chili_subset9_sp[,c("x", "y")])
+Chili_9<-cbind(Chili_subset9_sp, Chili_Own, Chili_Dayak, Chili_Helium, Chili_Henk, Chili_Niko, Chili_Preman, Chili_Otto, Chili_Katmandun, Chili_Teju, Chili_Tomi, Chili_Wodan, Chili_Juni, Chili_Inul, Chili_Kerry, Chili_Mindy,Dayak_09_LC, Helium_09_LC, Henk_09_LC,Katmandun_09_LC, Niko_09_LC,Otto_09_LC , Preman_09_LC, Teju_09_LC, Tomi_09_LC, Wodan_09_LC)
+as.data.frame(Chili_9)
+names(Chili_9)[8] <- "Own"
+names(Chili_9)[9] <- "Dayak"
+names(Chili_9)[10] <- "Helium"
+names(Chili_9)[11] <- "Henk"
+names(Chili_9)[12] <- "Niko"
+names(Chili_9)[13] <- "Preman"
+names(Chili_9)[14] <- "Otto"
+names(Chili_9)[15] <- "Katmandun"
+names(Chili_9)[16] <- "Teju"
+names(Chili_9)[17] <- "Tomi"
+names(Chili_9)[18] <- "Wodan"
+names(Chili_9)[19] <- "Juni"
+names(Chili_9)[20] <- "Inul"
+names(Chili_9)[21] <- "Kerry"
+names(Chili_9)[22] <- "Mindy"
+names(Chili_9)[23]<-"Dayak_LC"
+names(Chili_9)[24]<-"Helium_LC"
+names(Chili_9)[25]<-"Henk_LC"
+names(Chili_9)[26]<-"Katmandun_LC"
+names(Chili_9)[27]<-"Niko_LC"
+names(Chili_9)[28]<-"Otto_LC"
+names(Chili_9)[29]<-"Preman_LC"
+names(Chili_9)[30]<-"Teju_LC"
+names(Chili_9)[31]<-"Tomi_LC"
+names(Chili_9)[32]<-"Wodan_LC"
+Chili_9<-as.data.frame(Chili_9@data)
+View(Chili_9)
+
+#chili october
+Chili<-raster(AKDE[["Chili"]] , DF="CDF")
+Chili_Own<-raster.invert(Chili)
+sp::plot(Chili_Own)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+
+xy <- Chili_subset10[,c("x","y")]
+Chili_subset10_sp <- SpatialPointsDataFrame(coords = xy, data = Chili_subset10, proj4string = CRS)
+Chili_Own <- raster::extract(Chili_Own, Chili_subset10_sp[,c("x", "y")])
+Chili_Dayak<-raster::extract(Dayak, Chili_subset10_sp[,c("x", "y")])
+Chili_Helium<-raster::extract(Helium, Chili_subset10_sp[,c("x", "y")])
+Chili_Henk<-raster::extract(Henk, Chili_subset10_sp[,c("x", "y")])
+Chili_Niko<-raster::extract(ZeroRast, Chili_subset10_sp[,c("x", "y")])
+Chili_Preman<-raster::extract(Preman, Chili_subset10_sp[,c("x", "y")])
+Chili_Otto<-raster::extract(ZeroRast, Chili_subset10_sp[,c("x", "y")])
+Chili_Katmandun<-raster::extract(ZeroRast, Chili_subset10_sp[,c("x", "y")])
+Chili_Teju<-raster::extract(Teju, Chili_subset10_sp[,c("x", "y")])
+Chili_Tomi<-raster::extract(Tomi, Chili_subset10_sp[,c("x", "y")])
+Chili_Wodan<-raster::extract(Wodan, Chili_subset10_sp[,c("x", "y")])
+Chili_Juni<-raster::extract(Juni_rast, Chili_subset10_sp[,c("x", "y")])
+Chili_Inul<-raster::extract(Inul_rast, Chili_subset10_sp[,c("x", "y")])
+Chili_Kerry <-raster::extract(Kerry_rast, Chili_subset10_sp[,c("x", "y")])
+Chili_Mindy <-raster::extract(Mindy_rast, Chili_subset10_sp[,c("x", "y")])
+Dayak_10_LC<-raster::extract(Dayak_10_LC, Chili_subset10_sp[,c("x", "y")])
+Helium_10_LC<-raster::extract(Helium_10_LC, Chili_subset10_sp[,c("x", "y")])
+Henk_10_LC<-raster::extract(Henk_10_LC, Chili_subset10_sp[,c("x", "y")])
+Katmandun_10_LC<-raster::extract(ZeroRast, Chili_subset10_sp[,c("x", "y")])
+Niko_10_LC<-raster::extract(ZeroRast, Chili_subset10_sp[,c("x", "y")])
+Otto_10_LC<-raster::extract(ZeroRast, Chili_subset10_sp[,c("x", "y")])
+Preman_10_LC<-raster::extract(ZeroRast, Chili_subset10_sp[,c("x", "y")])
+Teju_10_LC<-raster::extract(Teju_10_LC, Chili_subset10_sp[,c("x", "y")])
+Tomi_10_LC<-raster::extract(Tomi_10_LC, Chili_subset10_sp[,c("x", "y")])
+Wodan_10_LC<-raster::extract(Wodan_10_LC, Chili_subset10_sp[,c("x", "y")])
+Chili_10<-cbind(Chili_subset10_sp, Chili_Own, Chili_Dayak, Chili_Helium, Chili_Henk, Chili_Niko, Chili_Preman, Chili_Otto, Chili_Katmandun, Chili_Teju, Chili_Tomi, Chili_Wodan, Chili_Juni, Chili_Inul, Chili_Kerry, Chili_Mindy,Dayak_10_LC, Helium_10_LC, Henk_10_LC,Katmandun_10_LC, Niko_10_LC,Otto_10_LC , Preman_10_LC, Teju_10_LC, Tomi_10_LC, Wodan_10_LC)
+as.data.frame(Chili_10)
+names(Chili_10)[8] <- "Own"
+names(Chili_10)[9] <- "Dayak"
+names(Chili_10)[10] <- "Helium"
+names(Chili_10)[11] <- "Henk"
+names(Chili_10)[12] <- "Niko"
+names(Chili_10)[13] <- "Preman"
+names(Chili_10)[14] <- "Otto"
+names(Chili_10)[15] <- "Katmandun"
+names(Chili_10)[16] <- "Teju"
+names(Chili_10)[17] <- "Tomi"
+names(Chili_10)[18] <- "Wodan"
+names(Chili_10)[19] <- "Juni"
+names(Chili_10)[20] <- "Inul"
+names(Chili_10)[21] <- "Kerry"
+names(Chili_10)[22] <- "Mindy"
+names(Chili_10)[23]<-"Dayak_LC"
+names(Chili_10)[24]<-"Helium_LC"
+names(Chili_10)[25]<-"Henk_LC"
+names(Chili_10)[26]<-"Katmandun_LC"
+names(Chili_10)[27]<-"Niko_LC"
+names(Chili_10)[28]<-"Otto_LC"
+names(Chili_10)[29]<-"Preman_LC"
+names(Chili_10)[30]<-"Teju_LC"
+names(Chili_10)[31]<-"Tomi_LC"
+names(Chili_10)[32]<-"Wodan_LC"
+Chili_10<-as.data.frame(Chili_10@data)
+View(Chili_10)
+
+
+#chili november
+Chili<-raster(AKDE[["Chili"]] , DF="PDF")
+Chili_Own<-raster.transformation(Chili, trans = "stretch", smin = 0, smax = 1)
+sp::plot(Chili)
+sp::plot(Chili_Own)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+
+xy <- Chili_subset11[,c("x","y")]
+Chili_subset11_sp <- SpatialPointsDataFrame(coords = xy, data = Chili_subset11, proj4string = CRS)
+Chili_Own <- raster::extract(Chili_Own, Chili_subset11_sp[,c("x", "y")])
+Chili_Dayak<-raster::extract(Dayak, Chili_subset11_sp[,c("x", "y")])
+Chili_Helium<-raster::extract(Helium, Chili_subset11_sp[,c("x", "y")])
+Chili_Henk<-raster::extract(Henk, Chili_subset11_sp[,c("x", "y")])
+Chili_Niko<-raster::extract(Niko, Chili_subset11_sp[,c("x", "y")])
+Chili_Preman<-raster::extract(Preman, Chili_subset11_sp[,c("x", "y")])
+Chili_Otto<-raster::extract(ZeroRast, Chili_subset11_sp[,c("x", "y")])
+Chili_Katmandun<-raster::extract(ZeroRast, Chili_subset11_sp[,c("x", "y")])
+Chili_Teju<-raster::extract(Teju, Chili_subset11_sp[,c("x", "y")])
+Chili_Tomi<-raster::extract(Tomi, Chili_subset11_sp[,c("x", "y")])
+Chili_Wodan<-raster::extract(Wodan, Chili_subset11_sp[,c("x", "y")])
+Chili_Juni<-raster::extract(Juni_rast, Chili_subset11_sp[,c("x", "y")])
+Chili_Inul<-raster::extract(Inul_rast, Chili_subset11_sp[,c("x", "y")])
+Chili_Kerry <-raster::extract(Kerry_rast, Chili_subset11_sp[,c("x", "y")])
+Chili_Mindy <-raster::extract(Mindy_rast, Chili_subset11_sp[,c("x", "y")])
+Dayak_11_LC<-raster::extract(Dayak_11_LC, Chili_subset11_sp[,c("x", "y")])
+Helium_11_LC<-raster::extract(Helium_11_LC, Chili_subset11_sp[,c("x", "y")])
+Henk_11_LC<-raster::extract(ZeroRast, Chili_subset11_sp[,c("x", "y")])
+Katmandun_11_LC<-raster::extract(ZeroRast, Chili_subset11_sp[,c("x", "y")])
+Niko_11_LC<-raster::extract(Niko_11_LC, Chili_subset11_sp[,c("x", "y")])
+Otto_11_LC<-raster::extract(ZeroRast, Chili_subset11_sp[,c("x", "y")])
+Preman_11_LC<-raster::extract(Preman_11_LC, Chili_subset11_sp[,c("x", "y")])
+Teju_11_LC<-raster::extract(Teju_11_LC, Chili_subset11_sp[,c("x", "y")])
+Tomi_11_LC<-raster::extract(Tomi_11_LC, Chili_subset11_sp[,c("x", "y")])
+Wodan_11_LC<-raster::extract(Wodan_11_LC, Chili_subset11_sp[,c("x", "y")])
+Chili_11<-cbind(Chili_subset11_sp, Chili_Own, Chili_Dayak, Chili_Helium, Chili_Henk, Chili_Niko, Chili_Preman, Chili_Otto, Chili_Katmandun, Chili_Teju, Chili_Tomi, Chili_Wodan, Chili_Juni, Chili_Inul, Chili_Kerry, Chili_Mindy,Dayak_11_LC, Helium_11_LC, Henk_11_LC,Katmandun_11_LC, Niko_11_LC,Otto_11_LC , Preman_11_LC, Teju_11_LC, Tomi_11_LC, Wodan_11_LC)
+as.data.frame(Chili_11)
+names(Chili_11)[8] <- "Own"
+names(Chili_11)[9] <- "Dayak"
+names(Chili_11)[10] <- "Helium"
+names(Chili_11)[11] <- "Henk"
+names(Chili_11)[12] <- "Niko"
+names(Chili_11)[13] <- "Preman"
+names(Chili_11)[14] <- "Otto"
+names(Chili_11)[15] <- "Katmandun"
+names(Chili_11)[16] <- "Teju"
+names(Chili_11)[17] <- "Tomi"
+names(Chili_11)[18] <- "Wodan"
+names(Chili_11)[19] <- "Juni"
+names(Chili_11)[20] <- "Inul"
+names(Chili_11)[21] <- "Kerry"
+names(Chili_11)[22] <- "Mindy"
+names(Chili_11)[23]<-"Dayak_LC"
+names(Chili_11)[24]<-"Helium_LC"
+names(Chili_11)[25]<-"Henk_LC"
+names(Chili_11)[26]<-"Katmandun_LC"
+names(Chili_11)[27]<-"Niko_LC"
+names(Chili_11)[28]<-"Otto_LC"
+names(Chili_11)[29]<-"Preman_LC"
+names(Chili_11)[30]<-"Teju_LC"
+names(Chili_11)[31]<-"Tomi_LC"
+names(Chili_11)[32]<-"Wodan_LC"
+Chili_11<-as.data.frame(Chili_11@data)
+View(Chili_11)
+
+Chili_df<- rbind(Chili_8, Chili_9, Chili_10, Chili_11)
+#any NA points within UDs would be 0
+Chili_df[is.na(Chili_df)] <- 0
+
+library(readr)
+Chili_Asso <- read_csv("ChiliAssociations2012.csv")
+Chili_df<-cbind(Chili_df, Chili_Asso)
+Chili_df<-as.data.frame(Chili_df)
+#write.csv(Chili_df, file="Chili_df_longcalls_rasterextract.csv")
+Chili_df<-read_csv( file="Chili_df_longcalls_rasterextract.csv")
+strftime(x=Chili_df$timestamp, format="%Y-%m-%d %H:%M:%S")
+Chili_df$time <- format(Chili_df$timestamp,'%H')
+
+Chili_df$date <- format(Chili_df$timestamp,'%d-%m')
+Chili_df$month <- format(Chili_df$timestamp,'%m')
+Chili_df$month<-as.factor(Chili_df$month)
+names(Chili_df)<-gsub("\\_","",names(Chili_df))
+
+# test spatial autocorrelation
+library(DHARMa)
+library(stringr)
+
+Chili_df$coords <- paste(Chili_df$x,", ",Chili_df$y)
+coords <- c(unique(Chili_df$coords))
+x_unique <- c(str_extract(coords, "^.+(?=,)"))
+y_unique <- c(str_extract(coords, "(?<=, ).+$"))
+library(lme4)
+fittedModel <- glm(PT ~ Own, data = Chili_df, family="binomial")
+sims<-simulateResiduals(fittedModel)
+simsrecalc<-recalculateResiduals(sims,group = Chili_df$coords)
+testSpatialAutocorrelation(simsrecalc, x = x_unique, y = y_unique)
+
+# no evidence of spatial autocorrelation
+
+
+#Niko March
+Niko<-raster(AKDE[["Niko"]] , DF="PDF")
+Niko_Own<-raster.transformation(Niko, trans = "stretch", smin = 0, smax = 1)
+sp::plot(Niko_Own)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Niko in March 2012
+xy <- Niko_subset3[,c("x","y")]
+Niko_subset3_sp <- SpatialPointsDataFrame(coords = xy, data = Niko_subset3, proj4string = CRS)
+Niko_Chili <- raster::extract(ZeroRast, Niko_subset3_sp[,c("x", "y")])
+Niko_Dayak<-raster::extract(Dayak, Niko_subset3_sp[,c("x", "y")])
+Niko_Helium<-raster::extract(ZeroRast, Niko_subset3_sp[,c("x", "y")])
+Niko_Henk<-raster::extract(Henk, Niko_subset3_sp[,c("x", "y")])
+Niko_Niko<-raster::extract(Niko_Own, Niko_subset3_sp[,c("x", "y")])
+Niko_Preman<-raster::extract(ZeroRast, Niko_subset3_sp[,c("x", "y")])
+Niko_Otto<-raster::extract(Otto, Niko_subset3_sp[,c("x", "y")])
+Niko_Katmandun<-raster::extract(ZeroRast, Niko_subset3_sp[,c("x", "y")])
+Niko_Teju<-raster::extract(ZeroRast, Niko_subset3_sp[,c("x", "y")])
+Niko_Tomi<-raster::extract(Tomi, Niko_subset3_sp[,c("x", "y")])
+Niko_Wodan<-raster::extract(Wodan, Niko_subset3_sp[,c("x", "y")])
+Niko_Juni<-raster::extract(Juni_rast, Niko_subset3_sp[,c("x", "y")])
+Niko_Inul<-raster::extract(Inul_rast, Niko_subset3_sp[,c("x", "y")])
+Niko_Kerry <-raster::extract(Kerry_rast, Niko_subset3_sp[,c("x", "y")])
+Niko_Mindy <-raster::extract(Mindy_rast, Niko_subset3_sp[,c("x", "y")])
+Dayak_03_LC<-raster::extract(ZeroRast, Niko_subset3_sp[,c("x", "y")])
+Helium_03_LC<-raster::extract(ZeroRast, Niko_subset3_sp[,c("x", "y")])
+Henk_03_LC<-raster::extract(Henk_03_LC, Niko_subset3_sp[,c("x", "y")])
+Katmandun_03_LC<-raster::extract(ZeroRast, Niko_subset3_sp[,c("x", "y")])
+Chili_03_LC<-raster::extract(ZeroRast, Niko_subset3_sp[,c("x", "y")])
+Otto_03_LC<-raster::extract(ZeroRast, Niko_subset3_sp[,c("x", "y")])
+Preman_03_LC<-raster::extract(ZeroRast, Niko_subset3_sp[,c("x", "y")])
+Teju_03_LC<-raster::extract(ZeroRast, Niko_subset3_sp[,c("x", "y")])
+Tomi_03_LC<-raster::extract(Tomi_03_LC, Niko_subset3_sp[,c("x", "y")])
+Wodan_03_LC<-raster::extract(Wodan_03_LC, Niko_subset3_sp[,c("x", "y")])
+Niko_3<-cbind(Niko_subset3_sp, Niko_Chili, Niko_Dayak, Niko_Helium, Niko_Henk, Niko_Niko, Niko_Preman, Niko_Otto, Niko_Katmandun, Niko_Teju, Niko_Tomi, Niko_Wodan, Niko_Juni, Niko_Inul, Niko_Kerry, Niko_Mindy,Dayak_03_LC, Helium_03_LC, Henk_03_LC,Katmandun_03_LC, Chili_03_LC,Otto_03_LC , Preman_03_LC, Teju_03_LC, Tomi_03_LC, Wodan_03_LC)
+as.data.frame(Niko_3)
+names(Niko_3)[8] <- "Chili"
+names(Niko_3)[9] <- "Dayak"
+names(Niko_3)[10] <- "Helium"
+names(Niko_3)[11] <- "Henk"
+names(Niko_3)[12] <- "Niko"
+names(Niko_3)[13] <- "Preman"
+names(Niko_3)[14] <- "Otto"
+names(Niko_3)[15] <- "Katmandun"
+names(Niko_3)[16] <- "Teju"
+names(Niko_3)[17] <- "Tomi"
+names(Niko_3)[18] <- "Wodan"
+names(Niko_3)[19] <- "Juni"
+names(Niko_3)[20] <- "Inul"
+names(Niko_3)[21] <- "Kerry"
+names(Niko_3)[22] <- "Mindy"
+names(Niko_3)[23]<-"Dayak_LC"
+names(Niko_3)[24]<-"Helium_LC"
+names(Niko_3)[25]<-"Henk_LC"
+names(Niko_3)[26]<-"Katmandun_LC"
+names(Niko_3)[27]<-"Chili_LC"
+names(Niko_3)[28]<-"Otto_LC"
+names(Niko_3)[29]<-"Preman_LC"
+names(Niko_3)[30]<-"Teju_LC"
+names(Niko_3)[31]<-"Tomi_LC"
+names(Niko_3)[32]<-"Wodan_LC"
+Niko_3<-as.data.frame(Niko_3@data)
+View(Niko_3)
+
+#Niko May
+
+Niko<-raster(AKDE[["Niko"]] , DF="PDF")
+Niko_Own<-raster.transformation(Niko, trans = "stretch", smin = 0, smax = 1)
+sp::plot(Niko_Own)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Niko in May 2012
+xy <- Niko_subset5[,c("x","y")]
+Niko_subset5_sp <- SpatialPointsDataFrame(coords = xy, data = Niko_subset5, proj4string = CRS)
+Niko_Chili <- raster::extract(ZeroRast, Niko_subset5_sp[,c("x", "y")])
+Niko_Dayak<-raster::extract(Dayak, Niko_subset5_sp[,c("x", "y")])
+Niko_Helium<-raster::extract(ZeroRast, Niko_subset5_sp[,c("x", "y")])
+Niko_Henk<-raster::extract(ZeroRast, Niko_subset5_sp[,c("x", "y")])
+Niko_Niko<-raster::extract(Niko_Own, Niko_subset5_sp[,c("x", "y")])
+Niko_Preman<-raster::extract(ZeroRast, Niko_subset5_sp[,c("x", "y")])
+Niko_Otto<-raster::extract(ZeroRast, Niko_subset5_sp[,c("x", "y")])
+Niko_Katmandun<-raster::extract(Katmandun, Niko_subset5_sp[,c("x", "y")])
+Niko_Teju<-raster::extract(ZeroRast, Niko_subset5_sp[,c("x", "y")])
+Niko_Tomi<-raster::extract(Tomi, Niko_subset5_sp[,c("x", "y")])
+Niko_Wodan<-raster::extract(Wodan, Niko_subset5_sp[,c("x", "y")])
+Niko_Juni<-raster::extract(Juni_rast, Niko_subset5_sp[,c("x", "y")])
+Niko_Inul<-raster::extract(Inul_rast, Niko_subset5_sp[,c("x", "y")])
+Niko_Kerry <-raster::extract(Kerry_rast, Niko_subset5_sp[,c("x", "y")])
+Niko_Mindy <-raster::extract(Mindy_rast, Niko_subset5_sp[,c("x", "y")])
+Dayak_05_LC<-raster::extract(ZeroRast, Niko_subset5_sp[,c("x", "y")])
+Helium_05_LC<-raster::extract(ZeroRast, Niko_subset5_sp[,c("x", "y")])
+Henk_05_LC<-raster::extract(ZeroRast, Niko_subset5_sp[,c("x", "y")])
+Katmandun_05_LC<-raster::extract(ZeroRast, Niko_subset5_sp[,c("x", "y")])
+Chili_05_LC<-raster::extract(ZeroRast, Niko_subset5_sp[,c("x", "y")])
+Otto_05_LC<-raster::extract(ZeroRast, Niko_subset5_sp[,c("x", "y")])
+Preman_05_LC<-raster::extract(ZeroRast, Niko_subset5_sp[,c("x", "y")])
+Teju_05_LC<-raster::extract(ZeroRast, Niko_subset5_sp[,c("x", "y")])
+Tomi_05_LC<-raster::extract(Tomi_05_LC, Niko_subset5_sp[,c("x", "y")])
+Wodan_05_LC<-raster::extract(Wodan_05_LC, Niko_subset5_sp[,c("x", "y")])
+Niko_5<-cbind(Niko_subset5_sp, Niko_Chili, Niko_Dayak, Niko_Helium, Niko_Henk, Niko_Niko, Niko_Preman, Niko_Otto, Niko_Katmandun, Niko_Teju, Niko_Tomi, Niko_Wodan, Niko_Juni, Niko_Inul, Niko_Kerry, Niko_Mindy,Dayak_05_LC, Helium_05_LC, Henk_05_LC,Katmandun_05_LC, Chili_05_LC,Otto_05_LC , Preman_05_LC, Teju_05_LC, Tomi_05_LC, Wodan_05_LC)
+as.data.frame(Niko_5)
+names(Niko_5)[8] <- "Chili"
+names(Niko_5)[9] <- "Dayak"
+names(Niko_5)[10] <- "Helium"
+names(Niko_5)[11] <- "Henk"
+names(Niko_5)[12] <- "Niko"
+names(Niko_5)[13] <- "Preman"
+names(Niko_5)[14] <- "Otto"
+names(Niko_5)[15] <- "Katmandun"
+names(Niko_5)[16] <- "Teju"
+names(Niko_5)[17] <- "Tomi"
+names(Niko_5)[18] <- "Wodan"
+names(Niko_5)[19] <- "Juni"
+names(Niko_5)[20] <- "Inul"
+names(Niko_5)[21] <- "Kerry"
+names(Niko_5)[22] <- "Mindy"
+names(Niko_5)[23]<-"Dayak_LC"
+names(Niko_5)[24]<-"Helium_LC"
+names(Niko_5)[25]<-"Henk_LC"
+names(Niko_5)[26]<-"Katmandun_LC"
+names(Niko_5)[27]<-"Chili_LC"
+names(Niko_5)[28]<-"Otto_LC"
+names(Niko_5)[29]<-"Preman_LC"
+names(Niko_5)[30]<-"Teju_LC"
+names(Niko_5)[31]<-"Tomi_LC"
+names(Niko_5)[32]<-"Wodan_LC"
+Niko_5<-as.data.frame(Niko_5@data)
+View(Niko_5)
+
+
+#Niko August
+Niko<-raster(AKDE[["Niko"]] , DF="PDF")
+Niko_Own<-raster.transformation(Niko, trans = "stretch", smin = 0, smax = 1)
+sp::plot(Niko_Own)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Niko in August 2012
+xy <- Niko_subset8[,c("x","y")]
+Niko_subset8_sp <- SpatialPointsDataFrame(coords = xy, data = Niko_subset8, proj4string = CRS)
+Niko_Chili <- raster::extract(Chili, Niko_subset8_sp[,c("x", "y")])
+Niko_Dayak<-raster::extract(ZeroRast, Niko_subset8_sp[,c("x", "y")])
+Niko_Helium<-raster::extract(ZeroRast, Niko_subset8_sp[,c("x", "y")])
+Niko_Henk<-raster::extract(Henk, Niko_subset8_sp[,c("x", "y")])
+Niko_Niko<-raster::extract(Niko_Own, Niko_subset8_sp[,c("x", "y")])
+Niko_Preman<-raster::extract(ZeroRast, Niko_subset8_sp[,c("x", "y")])
+Niko_Otto<-raster::extract(Otto, Niko_subset8_sp[,c("x", "y")])
+Niko_Katmandun<-raster::extract(ZeroRast, Niko_subset8_sp[,c("x", "y")])
+Niko_Teju<-raster::extract(ZeroRast, Niko_subset8_sp[,c("x", "y")])
+Niko_Tomi<-raster::extract(Tomi, Niko_subset8_sp[,c("x", "y")])
+Niko_Wodan<-raster::extract(Wodan, Niko_subset8_sp[,c("x", "y")])
+Niko_Juni<-raster::extract(Juni_rast, Niko_subset8_sp[,c("x", "y")])
+Niko_Inul<-raster::extract(Inul_rast, Niko_subset8_sp[,c("x", "y")])
+Niko_Kerry <-raster::extract(Kerry_rast, Niko_subset8_sp[,c("x", "y")])
+Niko_Mindy <-raster::extract(Mindy_rast, Niko_subset8_sp[,c("x", "y")])
+Dayak_08_LC<-raster::extract(ZeroRast, Niko_subset8_sp[,c("x", "y")])
+Helium_08_LC<-raster::extract(ZeroRast, Niko_subset8_sp[,c("x", "y")])
+Henk_08_LC<-raster::extract(Henk_08_LC, Niko_subset8_sp[,c("x", "y")])
+Katmandun_08_LC<-raster::extract(ZeroRast, Niko_subset8_sp[,c("x", "y")])
+Chili_08_LC<-raster::extract(Chili_08_LC, Niko_subset8_sp[,c("x", "y")])
+Otto_08_LC<-raster::extract(Otto_08_LC, Niko_subset8_sp[,c("x", "y")])
+Preman_08_LC<-raster::extract(ZeroRast, Niko_subset8_sp[,c("x", "y")])
+Teju_08_LC<-raster::extract(Teju_08_LC, Niko_subset8_sp[,c("x", "y")])
+Tomi_08_LC<-raster::extract(ZeroRast, Niko_subset8_sp[,c("x", "y")])
+Wodan_08_LC<-raster::extract(Wodan_08_LC, Niko_subset8_sp[,c("x", "y")])
+Niko_8<-cbind(Niko_subset8_sp, Niko_Chili, Niko_Dayak, Niko_Helium, Niko_Henk, Niko_Niko, Niko_Preman, Niko_Otto, Niko_Katmandun, Niko_Teju, Niko_Tomi, Niko_Wodan, Niko_Juni, Niko_Inul, Niko_Kerry, Niko_Mindy,Dayak_08_LC, Helium_08_LC, Henk_08_LC,Katmandun_08_LC, Chili_08_LC,Otto_08_LC , Preman_08_LC, Teju_08_LC, Tomi_08_LC, Wodan_08_LC)
+as.data.frame(Niko_8)
+names(Niko_8)[8] <- "Chili"
+names(Niko_8)[9] <- "Dayak"
+names(Niko_8)[10] <- "Helium"
+names(Niko_8)[11] <- "Henk"
+names(Niko_8)[12] <- "Niko"
+names(Niko_8)[13] <- "Preman"
+names(Niko_8)[14] <- "Otto"
+names(Niko_8)[15] <- "Katmandun"
+names(Niko_8)[16] <- "Teju"
+names(Niko_8)[17] <- "Tomi"
+names(Niko_8)[18] <- "Wodan"
+names(Niko_8)[19] <- "Juni"
+names(Niko_8)[20] <- "Inul"
+names(Niko_8)[21] <- "Kerry"
+names(Niko_8)[22] <- "Mindy"
+names(Niko_8)[23]<-"Dayak_LC"
+names(Niko_8)[24]<-"Helium_LC"
+names(Niko_8)[25]<-"Henk_LC"
+names(Niko_8)[26]<-"Katmandun_LC"
+names(Niko_8)[27]<-"Chili_LC"
+names(Niko_8)[28]<-"Otto_LC"
+names(Niko_8)[29]<-"Preman_LC"
+names(Niko_8)[30]<-"Teju_LC"
+names(Niko_8)[31]<-"Tomi_LC"
+names(Niko_8)[32]<-"Wodan_LC"
+Niko_8<-as.data.frame(Niko_8@data)
+View(Niko_8)
+
+#Niko September
+Niko<-raster(AKDE[["Niko"]] , DF="PDF")
+Niko_Own<-raster.transformation(Niko, trans = "norm", smin = 0, smax = 1)
+sp::plot(Niko_Own)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Niko in September 2012
+xy <- Niko_subset9[,c("x","y")]
+Niko_subset9_sp <- SpatialPointsDataFrame(coords = xy, data = Niko_subset9, proj4string = CRS)
+Niko_Chili <- raster::extract(Chili, Niko_subset9_sp[,c("x", "y")])
+Niko_Dayak<-raster::extract(ZeroRast, Niko_subset9_sp[,c("x", "y")])
+Niko_Helium<-raster::extract(ZeroRast, Niko_subset9_sp[,c("x", "y")])
+Niko_Henk<-raster::extract(Henk, Niko_subset9_sp[,c("x", "y")])
+Niko_Niko<-raster::extract(Niko_Own, Niko_subset9_sp[,c("x", "y")])
+Niko_Preman<-raster::extract(ZeroRast, Niko_subset9_sp[,c("x", "y")])
+Niko_Otto<-raster::extract(Otto, Niko_subset9_sp[,c("x", "y")])
+Niko_Katmandun<-raster::extract(ZeroRast, Niko_subset9_sp[,c("x", "y")])
+Niko_Teju<-raster::extract(ZeroRast, Niko_subset9_sp[,c("x", "y")])
+Niko_Tomi<-raster::extract(Tomi, Niko_subset9_sp[,c("x", "y")])
+Niko_Wodan<-raster::extract(Wodan, Niko_subset9_sp[,c("x", "y")])
+Niko_Juni<-raster::extract(Juni_rast, Niko_subset9_sp[,c("x", "y")])
+Niko_Inul<-raster::extract(Inul_rast, Niko_subset9_sp[,c("x", "y")])
+Niko_Kerry <-raster::extract(Kerry_rast, Niko_subset9_sp[,c("x", "y")])
+Niko_Mindy <-raster::extract(Mindy_rast, Niko_subset9_sp[,c("x", "y")])
+Dayak_09_LC<-raster::extract(ZeroRast, Niko_subset9_sp[,c("x", "y")])
+Helium_09_LC<-raster::extract(ZeroRast, Niko_subset9_sp[,c("x", "y")])
+Henk_09_LC<-raster::extract(Henk_09_LC, Niko_subset9_sp[,c("x", "y")])
+Katmandun_09_LC<-raster::extract(ZeroRast, Niko_subset9_sp[,c("x", "y")])
+Chili_09_LC<-raster::extract(Chili_09_LC, Niko_subset9_sp[,c("x", "y")])
+Otto_09_LC<-raster::extract(ZeroRast, Niko_subset9_sp[,c("x", "y")])
+Preman_09_LC<-raster::extract(ZeroRast, Niko_subset9_sp[,c("x", "y")])
+Teju_09_LC<-raster::extract(ZeroRast, Niko_subset9_sp[,c("x", "y")])
+Tomi_09_LC<-raster::extract(ZeroRast, Niko_subset9_sp[,c("x", "y")])
+Wodan_09_LC<-raster::extract(Wodan_09_LC, Niko_subset9_sp[,c("x", "y")])
+Niko_9<-cbind(Niko_subset9_sp, Niko_Chili, Niko_Dayak, Niko_Helium, Niko_Henk, Niko_Niko, Niko_Preman, Niko_Otto, Niko_Katmandun, Niko_Teju, Niko_Tomi, Niko_Wodan, Niko_Juni, Niko_Inul, Niko_Kerry, Niko_Mindy,Dayak_09_LC, Helium_09_LC, Henk_09_LC,Katmandun_09_LC, Chili_09_LC,Otto_09_LC , Preman_09_LC, Teju_09_LC, Tomi_09_LC, Wodan_09_LC)
+as.data.frame(Niko_9)
+names(Niko_9)[8] <- "Chili"
+names(Niko_9)[9] <- "Dayak"
+names(Niko_9)[10] <- "Helium"
+names(Niko_9)[11] <- "Henk"
+names(Niko_9)[12] <- "Niko"
+names(Niko_9)[13] <- "Preman"
+names(Niko_9)[14] <- "Otto"
+names(Niko_9)[15] <- "Katmandun"
+names(Niko_9)[16] <- "Teju"
+names(Niko_9)[17] <- "Tomi"
+names(Niko_9)[18] <- "Wodan"
+names(Niko_9)[19] <- "Juni"
+names(Niko_9)[20] <- "Inul"
+names(Niko_9)[21] <- "Kerry"
+names(Niko_9)[22] <- "Mindy"
+names(Niko_9)[23]<-"Dayak_LC"
+names(Niko_9)[24]<-"Helium_LC"
+names(Niko_9)[25]<-"Henk_LC"
+names(Niko_9)[26]<-"Katmandun_LC"
+names(Niko_9)[27]<-"Chili_LC"
+names(Niko_9)[28]<-"Otto_LC"
+names(Niko_9)[29]<-"Preman_LC"
+names(Niko_9)[30]<-"Teju_LC"
+names(Niko_9)[31]<-"Tomi_LC"
+names(Niko_9)[32]<-"Wodan_LC"
+Niko_9<-as.data.frame(Niko_9@data)
+View(Niko_9)
+
+#Niko November
+Niko<-raster(AKDE[["Niko"]] , DF="PDF")
+Niko_Own<-raster.transformation(Niko, trans = "norm", smin = 0, smax = 1)
+sp::plot(Niko_Own)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Niko in November 2012
+xy <- Niko_subset11[,c("x","y")]
+Niko_subset11_sp <- SpatialPointsDataFrame(coords = xy, data = Niko_subset11, proj4string = CRS)
+Niko_Chili <- raster::extract(Chili, Niko_subset11_sp[,c("x", "y")])
+Niko_Dayak<-raster::extract(Dayak, Niko_subset11_sp[,c("x", "y")])
+Niko_Helium<-raster::extract(Helium, Niko_subset11_sp[,c("x", "y")])
+Niko_Henk<-raster::extract(ZeroRast, Niko_subset11_sp[,c("x", "y")])
+Niko_Niko<-raster::extract(Niko_Own, Niko_subset11_sp[,c("x", "y")])
+Niko_Preman<-raster::extract(Preman, Niko_subset11_sp[,c("x", "y")])
+Niko_Otto<-raster::extract(ZeroRast, Niko_subset11_sp[,c("x", "y")])
+Niko_Katmandun<-raster::extract(ZeroRast, Niko_subset11_sp[,c("x", "y")])
+Niko_Teju<-raster::extract(Teju, Niko_subset11_sp[,c("x", "y")])
+Niko_Tomi<-raster::extract(Tomi, Niko_subset11_sp[,c("x", "y")])
+Niko_Wodan<-raster::extract(Wodan, Niko_subset11_sp[,c("x", "y")])
+Niko_Juni<-raster::extract(Juni_rast, Niko_subset11_sp[,c("x", "y")])
+Niko_Inul<-raster::extract(Inul_rast, Niko_subset11_sp[,c("x", "y")])
+Niko_Kerry <-raster::extract(Kerry_rast, Niko_subset11_sp[,c("x", "y")])
+Niko_Mindy <-raster::extract(Mindy_rast, Niko_subset11_sp[,c("x", "y")])
+Dayak_11_LC<-raster::extract(ZeroRast, Niko_subset11_sp[,c("x", "y")])
+Helium_11_LC<-raster::extract(ZeroRast, Niko_subset11_sp[,c("x", "y")])
+Henk_11_LC<-raster::extract(ZeroRast, Niko_subset11_sp[,c("x", "y")])
+Katmandun_11_LC<-raster::extract(ZeroRast, Niko_subset11_sp[,c("x", "y")])
+Chili_11_LC<-raster::extract(Chili_11_LC, Niko_subset11_sp[,c("x", "y")])
+Otto_11_LC<-raster::extract(ZeroRast, Niko_subset11_sp[,c("x", "y")])
+Preman_11_LC<-raster::extract(Preman_11_LC, Niko_subset11_sp[,c("x", "y")])
+Teju_11_LC<-raster::extract(Teju_11_LC, Niko_subset11_sp[,c("x", "y")])
+Tomi_11_LC<-raster::extract(Tomi_11_LC, Niko_subset11_sp[,c("x", "y")])
+Wodan_11_LC<-raster::extract(Wodan_11_LC, Niko_subset11_sp[,c("x", "y")])
+Niko_11<-cbind(Niko_subset11_sp, Niko_Chili, Niko_Dayak, Niko_Helium, Niko_Henk, Niko_Niko, Niko_Preman, Niko_Otto, Niko_Katmandun, Niko_Teju, Niko_Tomi, Niko_Wodan, Niko_Juni, Niko_Inul, Niko_Kerry, Niko_Mindy,Dayak_11_LC, Helium_11_LC, Henk_11_LC,Katmandun_11_LC, Chili_11_LC,Otto_11_LC , Preman_11_LC, Teju_11_LC, Tomi_11_LC, Wodan_11_LC)
+as.data.frame(Niko_11)
+names(Niko_11)[8] <- "Chili"
+names(Niko_11)[9] <- "Dayak"
+names(Niko_11)[10] <- "Helium"
+names(Niko_11)[11] <- "Henk"
+names(Niko_11)[12] <- "Niko"
+names(Niko_11)[13] <- "Preman"
+names(Niko_11)[14] <- "Otto"
+names(Niko_11)[15] <- "Katmandun"
+names(Niko_11)[16] <- "Teju"
+names(Niko_11)[17] <- "Tomi"
+names(Niko_11)[18] <- "Wodan"
+names(Niko_11)[19] <- "Juni"
+names(Niko_11)[20] <- "Inul"
+names(Niko_11)[21] <- "Kerry"
+names(Niko_11)[22] <- "Mindy"
+names(Niko_11)[23]<-"Dayak_LC"
+names(Niko_11)[24]<-"Helium_LC"
+names(Niko_11)[25]<-"Henk_LC"
+names(Niko_11)[26]<-"Katmandun_LC"
+names(Niko_11)[27]<-"Chili_LC"
+names(Niko_11)[28]<-"Otto_LC"
+names(Niko_11)[29]<-"Preman_LC"
+names(Niko_11)[30]<-"Teju_LC"
+names(Niko_11)[31]<-"Tomi_LC"
+names(Niko_11)[32]<-"Wodan_LC"
+Niko_11<-as.data.frame(Niko_11@data)
+View(Niko_11)
+
+#Niko December
+Niko<-raster(AKDE[["Niko"]] , DF="PDF")
+Niko_Own<-raster.transformation(Niko, trans = "norm", smin = 0, smax = 1)
+sp::plot(Niko_Own)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Niko in December 2012
+xy <- Niko_subset12[,c("x","y")]
+Niko_subset12_sp <- SpatialPointsDataFrame(coords = xy, data = Niko_subset12, proj4string = CRS)
+Niko_Chili <- raster::extract(Chili, Niko_subset12_sp[,c("x", "y")])
+Niko_Dayak<-raster::extract(Dayak, Niko_subset12_sp[,c("x", "y")])
+Niko_Helium<-raster::extract(ZeroRast, Niko_subset12_sp[,c("x", "y")])
+Niko_Henk<-raster::extract(Henk, Niko_subset12_sp[,c("x", "y")])
+Niko_Niko<-raster::extract(Niko_Own, Niko_subset12_sp[,c("x", "y")])
+Niko_Preman<-raster::extract(Preman, Niko_subset12_sp[,c("x", "y")])
+Niko_Otto<-raster::extract(ZeroRast, Niko_subset12_sp[,c("x", "y")])
+Niko_Katmandun<-raster::extract(ZeroRast, Niko_subset12_sp[,c("x", "y")])
+Niko_Teju<-raster::extract(Teju, Niko_subset12_sp[,c("x", "y")])
+Niko_Tomi<-raster::extract(Tomi, Niko_subset12_sp[,c("x", "y")])
+Niko_Wodan<-raster::extract(Wodan, Niko_subset12_sp[,c("x", "y")])
+Niko_Juni<-raster::extract(Juni_rast, Niko_subset12_sp[,c("x", "y")])
+Niko_Inul<-raster::extract(Inul_rast, Niko_subset12_sp[,c("x", "y")])
+Niko_Kerry <-raster::extract(Kerry_rast, Niko_subset12_sp[,c("x", "y")])
+Niko_Mindy <-raster::extract(Mindy_rast, Niko_subset12_sp[,c("x", "y")])
+Dayak_12_LC<-raster::extract(Dayak_12_LC, Niko_subset12_sp[,c("x", "y")])
+Helium_12_LC<-raster::extract(ZeroRast, Niko_subset12_sp[,c("x", "y")])
+Henk_12_LC<-raster::extract(Henk_12_LC, Niko_subset12_sp[,c("x", "y")])
+Katmandun_12_LC<-raster::extract(ZeroRast, Niko_subset12_sp[,c("x", "y")])
+Chili_12_LC<-raster::extract(ZeroRast, Niko_subset12_sp[,c("x", "y")])
+Otto_12_LC<-raster::extract(ZeroRast, Niko_subset12_sp[,c("x", "y")])
+Preman_12_LC<-raster::extract(Preman_12_LC, Niko_subset12_sp[,c("x", "y")])
+Teju_12_LC<-raster::extract(Teju_12_LC, Niko_subset12_sp[,c("x", "y")])
+Tomi_12_LC<-raster::extract(Tomi_12_LC, Niko_subset12_sp[,c("x", "y")])
+Wodan_12_LC<-raster::extract(Wodan_12_LC, Niko_subset12_sp[,c("x", "y")])
+Niko_12<-cbind(Niko_subset12_sp, Niko_Chili, Niko_Dayak, Niko_Helium, Niko_Henk, Niko_Niko, Niko_Preman, Niko_Otto, Niko_Katmandun, Niko_Teju, Niko_Tomi, Niko_Wodan, Niko_Juni, Niko_Inul, Niko_Kerry, Niko_Mindy,Dayak_12_LC, Helium_12_LC, Henk_12_LC,Katmandun_12_LC, Chili_12_LC,Otto_12_LC , Preman_12_LC, Teju_12_LC, Tomi_12_LC, Wodan_12_LC)
+as.data.frame(Niko_12)
+names(Niko_12)[8] <- "Chili"
+names(Niko_12)[9] <- "Dayak"
+names(Niko_12)[10] <- "Helium"
+names(Niko_12)[11] <- "Henk"
+names(Niko_12)[12] <- "Niko"
+names(Niko_12)[13] <- "Preman"
+names(Niko_12)[14] <- "Otto"
+names(Niko_12)[15] <- "Katmandun"
+names(Niko_12)[16] <- "Teju"
+names(Niko_12)[17] <- "Tomi"
+names(Niko_12)[18] <- "Wodan"
+names(Niko_12)[19] <- "Juni"
+names(Niko_12)[20] <- "Inul"
+names(Niko_12)[21] <- "Kerry"
+names(Niko_12)[22] <- "Mindy"
+names(Niko_12)[23]<-"Dayak_LC"
+names(Niko_12)[24]<-"Helium_LC"
+names(Niko_12)[25]<-"Henk_LC"
+names(Niko_12)[26]<-"Katmandun_LC"
+names(Niko_12)[27]<-"Chili_LC"
+names(Niko_12)[28]<-"Otto_LC"
+names(Niko_12)[29]<-"Preman_LC"
+names(Niko_12)[30]<-"Teju_LC"
+names(Niko_12)[31]<-"Tomi_LC"
+names(Niko_12)[32]<-"Wodan_LC"
+Niko_12<-as.data.frame(Niko_12@data)
+View(Niko_12)
+library(readr)
+Niko_df<- rbind(Niko_3,Niko_5, Niko_8, Niko_9, Niko_11, Niko_12)
+write.csv(Niko_df, "Niko_df.csv")
+Niko_df<-read.csv(file="Niko_df.csv")
+#any NA points within UDs would be 0
+Niko_df[is.na(Niko_df)] <- 0
+Niko_Assoc<-read_csv("Niko_Associations_2012.csv")
+Niko_df<-cbind(Niko_df, Niko_Assoc)
+str(Niko_df)
+names(Niko_df)<-gsub("\\_","",names(Niko_df))
+strftime(x=Niko_df$timestamp, format="%Y-%m-%d %H:%M:%S")
+
+
+
+# Teju
+# create spatial points data frames to extract from specific rasters
+#Teju
+Teju<-raster(AKDE[["Teju"]] , DF="PDF")
+Teju_Own<-raster.transformation(Teju, trans = "stretch", smin = 0, smax = 1)
+sp::plot(Teju_Own)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Teju in August 2012
+xy <- Teju_subset8[,c("x","y")]
+Teju_subset8_sp <- SpatialPointsDataFrame(coords = xy, data = Teju_subset8, proj4string = CRS)
+Teju_Own <- raster::extract(Teju_Own, Teju_subset8_sp[,c("x", "y")])
+Teju_Dayak<-raster::extract(ZeroRast, Teju_subset8_sp[,c("x", "y")])
+Teju_Helium<-raster::extract(ZeroRast, Teju_subset8_sp[,c("x", "y")])
+Teju_Henk<-raster::extract(Henk, Teju_subset8_sp[,c("x", "y")])
+Teju_Niko<-raster::extract(ZeroRast, Teju_subset8_sp[,c("x", "y")])
+Teju_Preman<-raster::extract(ZeroRast, Teju_subset8_sp[,c("x", "y")])
+Teju_Otto<-raster::extract(Otto, Teju_subset8_sp[,c("x", "y")])
+Teju_Katmandun<-raster::extract(ZeroRast, Teju_subset8_sp[,c("x", "y")])
+Teju_Chili<-raster::extract(Chili, Teju_subset8_sp[,c("x", "y")])
+Teju_Tomi<-raster::extract(Tomi, Teju_subset8_sp[,c("x", "y")])
+Teju_Wodan<-raster::extract(Wodan, Teju_subset8_sp[,c("x", "y")])
+Teju_Juni<-raster::extract(Juni_rast, Teju_subset8_sp[,c("x", "y")])
+Teju_Inul<-raster::extract(Inul_rast, Teju_subset8_sp[,c("x", "y")])
+Teju_Kerry <-raster::extract(Kerry_rast, Teju_subset8_sp[,c("x", "y")])
+Teju_Mindy <-raster::extract(Mindy_rast, Teju_subset8_sp[,c("x", "y")])
+Dayak_08_LC<-raster::extract(ZeroRast, Teju_subset8_sp[,c("x", "y")])
+Helium_08_LC<-raster::extract(ZeroRast, Teju_subset8_sp[,c("x", "y")])
+Henk_08_LC<-raster::extract(Henk_08_LC, Teju_subset8_sp[,c("x", "y")])
+Katmandun_08_LC<-raster::extract(ZeroRast, Teju_subset8_sp[,c("x", "y")])
+Niko_08_LC<-raster::extract(Niko_08_LC, Teju_subset8_sp[,c("x", "y")])
+Otto_08_LC<-raster::extract(Otto_08_LC, Teju_subset8_sp[,c("x", "y")])
+Preman_08_LC<-raster::extract(ZeroRast, Teju_subset8_sp[,c("x", "y")])
+Chili_08_LC<-raster::extract(Chili_08_LC, Teju_subset8_sp[,c("x", "y")])
+Tomi_08_LC<-raster::extract(ZeroRast, Teju_subset8_sp[,c("x", "y")])
+Wodan_08_LC<-raster::extract(Wodan_08_LC, Teju_subset8_sp[,c("x", "y")])
+Teju_8<-cbind(Teju_subset8_sp, Teju_Own, Teju_Dayak, Teju_Helium, Teju_Henk, Teju_Niko, Teju_Preman, Teju_Otto, Teju_Katmandun, Teju_Chili, Teju_Tomi, Teju_Wodan, Teju_Juni, Teju_Inul, Teju_Kerry, Teju_Mindy,Dayak_08_LC, Helium_08_LC, Henk_08_LC,Katmandun_08_LC, Niko_08_LC,Otto_08_LC , Preman_08_LC, Chili_08_LC, Tomi_08_LC, Wodan_08_LC)
+as.data.frame(Teju_8)
+names(Teju_8)[8] <- "Own"
+names(Teju_8)[9] <- "Dayak"
+names(Teju_8)[10] <- "Helium"
+names(Teju_8)[11] <- "Henk"
+names(Teju_8)[12] <- "Niko"
+names(Teju_8)[13] <- "Preman"
+names(Teju_8)[14] <- "Otto"
+names(Teju_8)[15] <- "Katmandun"
+names(Teju_8)[16] <- "Chili"
+names(Teju_8)[17] <- "Tomi"
+names(Teju_8)[18] <- "Wodan"
+names(Teju_8)[19] <- "Juni"
+names(Teju_8)[20] <- "Inul"
+names(Teju_8)[21] <- "Kerry"
+names(Teju_8)[22] <- "Mindy"
+names(Teju_8)[23]<-"Dayak_LC"
+names(Teju_8)[24]<-"Helium_LC"
+names(Teju_8)[25]<-"Henk_LC"
+names(Teju_8)[26]<-"Katmandun_LC"
+names(Teju_8)[27]<-"Niko_LC"
+names(Teju_8)[28]<-"Otto_LC"
+names(Teju_8)[29]<-"Preman_LC"
+names(Teju_8)[30]<-"Chili_LC"
+names(Teju_8)[31]<-"Tomi_LC"
+names(Teju_8)[32]<-"Wodan_LC"
+Teju_8<-as.data.frame(Teju_8@data)
+View(Teju_8)
+
+#Teju October
+
+#Teju october
+Teju<-raster(AKDE[["Teju"]] , DF="PDF")
+Teju_Own<-raster.transformation(Teju, trans = "stretch", smin = 0, smax = 1)
+sp::plot(Teju_Own)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+xy <- Teju_subset10[,c("x","y")]
+Teju_subset10_sp <- SpatialPointsDataFrame(coords = xy, data = Teju_subset10, proj4string = CRS)
+Teju_Own <- raster::extract(Teju_Own, Teju_subset10_sp[,c("x", "y")])
+Teju_Dayak<-raster::extract(Dayak, Teju_subset10_sp[,c("x", "y")])
+Teju_Helium<-raster::extract(Helium, Teju_subset10_sp[,c("x", "y")])
+Teju_Henk<-raster::extract(Henk, Teju_subset10_sp[,c("x", "y")])
+Teju_Niko<-raster::extract(ZeroRast, Teju_subset10_sp[,c("x", "y")])
+Teju_Preman<-raster::extract(Preman, Teju_subset10_sp[,c("x", "y")])
+Teju_Otto<-raster::extract(ZeroRast, Teju_subset10_sp[,c("x", "y")])
+Teju_Katmandun<-raster::extract(ZeroRast, Teju_subset10_sp[,c("x", "y")])
+Teju_Chili<-raster::extract(Chili, Teju_subset10_sp[,c("x", "y")])
+Teju_Tomi<-raster::extract(Tomi, Teju_subset10_sp[,c("x", "y")])
+Teju_Wodan<-raster::extract(Wodan, Teju_subset10_sp[,c("x", "y")])
+Teju_Juni<-raster::extract(Juni_rast, Teju_subset10_sp[,c("x", "y")])
+Teju_Inul<-raster::extract(Inul_rast, Teju_subset10_sp[,c("x", "y")])
+Teju_Kerry <-raster::extract(Kerry_rast, Teju_subset10_sp[,c("x", "y")])
+Teju_Mindy <-raster::extract(Mindy_rast, Teju_subset10_sp[,c("x", "y")])
+Dayak_10_LC<-raster::extract(Dayak_10_LC, Teju_subset10_sp[,c("x", "y")])
+Helium_10_LC<-raster::extract(Helium_10_LC, Teju_subset10_sp[,c("x", "y")])
+Henk_10_LC<-raster::extract(Henk_10_LC, Teju_subset10_sp[,c("x", "y")])
+Katmandun_10_LC<-raster::extract(ZeroRast, Teju_subset10_sp[,c("x", "y")])
+Niko_10_LC<-raster::extract(ZeroRast, Teju_subset10_sp[,c("x", "y")])
+Otto_10_LC<-raster::extract(ZeroRast, Teju_subset10_sp[,c("x", "y")])
+Preman_10_LC<-raster::extract(ZeroRast, Teju_subset10_sp[,c("x", "y")])
+Chili_10_LC<-raster::extract(Chili_10_LC, Teju_subset10_sp[,c("x", "y")])
+Tomi_10_LC<-raster::extract(Tomi_10_LC, Teju_subset10_sp[,c("x", "y")])
+Wodan_10_LC<-raster::extract(Wodan_10_LC, Teju_subset10_sp[,c("x", "y")])
+Teju_10<-cbind(Teju_subset10_sp, Teju_Own, Teju_Dayak, Teju_Helium, Teju_Henk, Teju_Niko, Teju_Preman, Teju_Otto, Teju_Katmandun, Teju_Chili, Teju_Tomi, Teju_Wodan, Teju_Juni, Teju_Inul, Teju_Kerry, Teju_Mindy,Dayak_10_LC, Helium_10_LC, Henk_10_LC,Katmandun_10_LC, Niko_10_LC, Otto_10_LC , Preman_10_LC, Chili_10_LC, Tomi_10_LC, Wodan_10_LC)
+as.data.frame(Teju_10)
+View(Teju_10)
+names(Teju_10)[8] <- "Own"
+names(Teju_10)[9] <- "Dayak"
+names(Teju_10)[10] <- "Helium"
+names(Teju_10)[11] <- "Henk"
+names(Teju_10)[12] <- "Niko"
+names(Teju_10)[13] <- "Preman"
+names(Teju_10)[14] <- "Otto"
+names(Teju_10)[15] <- "Katmandun"
+names(Teju_10)[16] <- "Chili"
+names(Teju_10)[17] <- "Tomi"
+names(Teju_10)[18] <- "Wodan"
+names(Teju_10)[19] <- "Juni"
+names(Teju_10)[20] <- "Inul"
+names(Teju_10)[21] <- "Kerry"
+names(Teju_10)[22] <- "Mindy"
+names(Teju_10)[23]<-"Dayak_LC"
+names(Teju_10)[24]<-"Helium_LC"
+names(Teju_10)[25]<-"Henk_LC"
+names(Teju_10)[26]<-"Katmandun_LC"
+names(Teju_10)[27]<-"Niko_LC"
+names(Teju_10)[28]<-"Otto_LC"
+names(Teju_10)[29]<-"Preman_LC"
+names(Teju_10)[30]<-"Chili_LC"
+names(Teju_10)[31]<-"Tomi_LC"
+names(Teju_10)[32]<-"Wodan_LC"
+Teju_10<-as.data.frame(Teju_10@data)
+View(Teju_10)
+
+#Teju November
+Teju<-raster(AKDE[["Teju"]] , DF="PDF")
+Teju_Own<-raster.transformation(Teju, trans = "stretch", smin = 0, smax = 1)
+sp::plot(Teju_Own)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+xy <- Teju_subset11[,c("x","y")]
+Teju_subset11_sp <- SpatialPointsDataFrame(coords = xy, data = Teju_subset11, proj4string = CRS)
+Teju_Own <- raster::extract(Teju_Own, Teju_subset11_sp[,c("x", "y")])
+Teju_Dayak<-raster::extract(Dayak, Teju_subset11_sp[,c("x", "y")])
+Teju_Helium<-raster::extract(Helium, Teju_subset11_sp[,c("x", "y")])
+Teju_Henk<-raster::extract(ZeroRast, Teju_subset11_sp[,c("x", "y")])
+Teju_Niko<-raster::extract(Niko, Teju_subset11_sp[,c("x", "y")])
+Teju_Preman<-raster::extract(Preman, Teju_subset11_sp[,c("x", "y")])
+Teju_Otto<-raster::extract(ZeroRast, Teju_subset11_sp[,c("x", "y")])
+Teju_Katmandun<-raster::extract(ZeroRast, Teju_subset11_sp[,c("x", "y")])
+Teju_Chili<-raster::extract(Chili, Teju_subset11_sp[,c("x", "y")])
+Teju_Tomi<-raster::extract(Tomi, Teju_subset11_sp[,c("x", "y")])
+Teju_Wodan<-raster::extract(Wodan, Teju_subset11_sp[,c("x", "y")])
+Teju_Juni<-raster::extract(Juni_rast, Teju_subset11_sp[,c("x", "y")])
+Teju_Inul<-raster::extract(Inul_rast, Teju_subset11_sp[,c("x", "y")])
+Teju_Kerry <-raster::extract(Kerry_rast, Teju_subset11_sp[,c("x", "y")])
+Teju_Mindy <-raster::extract(Mindy_rast, Teju_subset11_sp[,c("x", "y")])
+Dayak_11_LC<-raster::extract(Dayak_11_LC, Teju_subset11_sp[,c("x", "y")])
+Helium_11_LC<-raster::extract(ZeroRast, Teju_subset11_sp[,c("x", "y")])
+Henk_11_LC<-raster::extract(ZeroRast, Teju_subset11_sp[,c("x", "y")])
+Katmandun_11_LC<-raster::extract(ZeroRast, Teju_subset11_sp[,c("x", "y")])
+Niko_11_LC<-raster::extract(Niko_11_LC, Teju_subset11_sp[,c("x", "y")])
+Otto_11_LC<-raster::extract(ZeroRast, Teju_subset11_sp[,c("x", "y")])
+Preman_11_LC<-raster::extract(Preman_11_LC, Teju_subset11_sp[,c("x", "y")])
+Chili_11_LC<-raster::extract(Chili_11_LC, Teju_subset11_sp[,c("x", "y")])
+Tomi_11_LC<-raster::extract(Tomi_11_LC, Teju_subset11_sp[,c("x", "y")])
+Wodan_11_LC<-raster::extract(Wodan_11_LC, Teju_subset11_sp[,c("x", "y")])
+Teju_11<-cbind(Teju_subset11_sp, Teju_Own, Teju_Dayak, Teju_Helium, Teju_Henk, Teju_Niko, Teju_Preman, Teju_Otto, Teju_Katmandun, Teju_Chili, Teju_Tomi, Teju_Wodan, Teju_Juni, Teju_Inul, Teju_Kerry, Teju_Mindy,Dayak_11_LC, Helium_11_LC, Henk_11_LC,Katmandun_11_LC, Niko_11_LC, Otto_11_LC , Preman_11_LC, Chili_11_LC, Tomi_11_LC, Wodan_11_LC)
+as.data.frame(Teju_11)
+View(Teju_11)
+names(Teju_11)[8] <- "Own"
+names(Teju_11)[9] <- "Dayak"
+names(Teju_11)[10] <- "Helium"
+names(Teju_11)[11] <- "Henk"
+names(Teju_11)[12] <- "Niko"
+names(Teju_11)[13] <- "Preman"
+names(Teju_11)[14] <- "Otto"
+names(Teju_11)[15] <- "Katmandun"
+names(Teju_11)[16] <- "Chili"
+names(Teju_11)[17] <- "Tomi"
+names(Teju_11)[18] <- "Wodan"
+names(Teju_11)[19] <- "Juni"
+names(Teju_11)[20] <- "Inul"
+names(Teju_11)[21] <- "Kerry"
+names(Teju_11)[22] <- "Mindy"
+names(Teju_11)[23]<-"Dayak_LC"
+names(Teju_11)[24]<-"Helium_LC"
+names(Teju_11)[25]<-"Henk_LC"
+names(Teju_11)[26]<-"Katmandun_LC"
+names(Teju_11)[27]<-"Niko_LC"
+names(Teju_11)[28]<-"Otto_LC"
+names(Teju_11)[29]<-"Preman_LC"
+names(Teju_11)[30]<-"Chili_LC"
+names(Teju_11)[31]<-"Tomi_LC"
+names(Teju_11)[32]<-"Wodan_LC"
+Teju_11<-as.data.frame(Teju_11@data)
+View(Teju_11)
+
+#Teju December
+Teju<-raster(AKDE[["Teju"]] , DF="PDF")
+Teju_Own<-raster.transformation(Teju, trans = "stretch", smin = 0, smax = 1)
+
+sp::plot(Teju_Own)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+xy <- Teju_subset12[,c("x","y")]
+Teju_subset12_sp <- SpatialPointsDataFrame(coords = xy, data = Teju_subset12, proj4string = CRS)
+Teju_Own <- raster::extract(Teju_Own, Teju_subset12_sp[,c("x", "y")])
+Teju_Dayak<-raster::extract(Dayak, Teju_subset12_sp[,c("x", "y")])
+Teju_Helium<-raster::extract(ZeroRast, Teju_subset12_sp[,c("x", "y")])
+Teju_Henk<-raster::extract(Henk, Teju_subset12_sp[,c("x", "y")])
+Teju_Niko<-raster::extract(Niko, Teju_subset12_sp[,c("x", "y")])
+Teju_Preman<-raster::extract(Preman, Teju_subset12_sp[,c("x", "y")])
+Teju_Otto<-raster::extract(ZeroRast, Teju_subset12_sp[,c("x", "y")])
+Teju_Katmandun<-raster::extract(ZeroRast, Teju_subset12_sp[,c("x", "y")])
+Teju_Chili<-raster::extract(Chili, Teju_subset12_sp[,c("x", "y")])
+Teju_Tomi<-raster::extract(Tomi, Teju_subset12_sp[,c("x", "y")])
+Teju_Wodan<-raster::extract(Wodan, Teju_subset12_sp[,c("x", "y")])
+Teju_Juni<-raster::extract(Juni_rast, Teju_subset12_sp[,c("x", "y")])
+Teju_Inul<-raster::extract(Inul_rast, Teju_subset12_sp[,c("x", "y")])
+Teju_Kerry <-raster::extract(Kerry_rast, Teju_subset12_sp[,c("x", "y")])
+Teju_Mindy <-raster::extract(Mindy_rast, Teju_subset12_sp[,c("x", "y")])
+Dayak_12_LC<-raster::extract(Dayak_12_LC, Teju_subset12_sp[,c("x", "y")])
+Helium_12_LC<-raster::extract(ZeroRast, Teju_subset12_sp[,c("x", "y")])
+Henk_12_LC<-raster::extract(Henk_12_LC, Teju_subset12_sp[,c("x", "y")])
+Katmandun_12_LC<-raster::extract(ZeroRast, Teju_subset12_sp[,c("x", "y")])
+Niko_12_LC<-raster::extract(Niko_12_LC, Teju_subset12_sp[,c("x", "y")])
+Otto_12_LC<-raster::extract(ZeroRast, Teju_subset12_sp[,c("x", "y")])
+Preman_12_LC<-raster::extract(Preman_12_LC, Teju_subset12_sp[,c("x", "y")])
+Chili_12_LC<-raster::extract(ZeroRast, Teju_subset12_sp[,c("x", "y")])
+Tomi_12_LC<-raster::extract(Tomi_12_LC, Teju_subset12_sp[,c("x", "y")])
+Wodan_12_LC<-raster::extract(Wodan_12_LC, Teju_subset12_sp[,c("x", "y")])
+Teju_12<-cbind(Teju_subset12_sp, Teju_Own, Teju_Dayak, Teju_Helium, Teju_Henk, Teju_Niko, Teju_Preman, Teju_Otto, Teju_Katmandun, Teju_Chili, Teju_Tomi, Teju_Wodan, Teju_Juni, Teju_Inul, Teju_Kerry, Teju_Mindy,Dayak_12_LC, Helium_12_LC, Henk_12_LC,Katmandun_12_LC, Niko_12_LC, Otto_12_LC , Preman_12_LC, Chili_12_LC, Tomi_12_LC, Wodan_12_LC)
+as.data.frame(Teju_12)
+names(Teju_12)[8] <- "Own"
+names(Teju_12)[9] <- "Dayak"
+names(Teju_12)[10] <- "Helium"
+names(Teju_12)[11] <- "Henk"
+names(Teju_12)[12] <- "Niko"
+names(Teju_12)[13] <- "Preman"
+names(Teju_12)[14] <- "Otto"
+names(Teju_12)[15] <- "Katmandun"
+names(Teju_12)[16] <- "Chili"
+names(Teju_12)[17] <- "Tomi"
+names(Teju_12)[18] <- "Wodan"
+names(Teju_12)[19] <- "Juni"
+names(Teju_12)[20] <- "Inul"
+names(Teju_12)[21] <- "Kerry"
+names(Teju_12)[22] <- "Mindy"
+names(Teju_12)[23]<-"Dayak_LC"
+names(Teju_12)[24]<-"Helium_LC"
+names(Teju_12)[25]<-"Henk_LC"
+names(Teju_12)[26]<-"Katmandun_LC"
+names(Teju_12)[27]<-"Niko_LC"
+names(Teju_12)[28]<-"Otto_LC"
+names(Teju_12)[29]<-"Preman_LC"
+names(Teju_12)[30]<-"Chili_LC"
+names(Teju_12)[31]<-"Tomi_LC"
+names(Teju_12)[32]<-"Wodan_LC"
+Teju_12<-as.data.frame(Teju_12@data)
+View(Teju_12)
+
+# rbind for a dataframe for Teju models
+Teju_df<-rbind(Teju_8, Teju_10, Teju_11, Teju_12)
+
+write.csv(Teju_df, "Teju_df.csv")
+Teju_df<-read.csv(file="Teju_df.csv")
+#any NA points within UDs would be 0
+Teju_df[is.na(Teju_df)] <- 0
+
+names(Teju_df)<-gsub("\\_","",names(Teju_df))
+Teju_Assoc<-read_csv("TejuAssociation2012.csv")
+Teju_df<-cbind(Teju_df, Teju_Assoc)
+str(Teju_df)
+
+# create spatial points data frames to extract from specific rasters
+#Tomi
+library(sp)
+Tomi<-raster(AKDE[["Tomi"]] , DF="PDF")
+Tomi_Own<-raster.transformation(Tomi, trans = "stretch", smin = 0, smax = 1)
+sp::plot(Tomi)
+View(Tomi_subset3)
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Tomi in March 2012
+xy <- Tomi_subset3[,c("x","y")]
+Tomi_subset3_sp <- SpatialPointsDataFrame(coords = xy, data = Tomi_subset3, proj4string = CRS)
+Tomi_Own <- raster::extract(Tomi_Own, Tomi_subset3_sp[,c("x", "y")])
+Tomi_Dayak<-raster::extract(ZeroRast, Tomi_subset3_sp[,c("x", "y")])
+Tomi_Helium<-raster::extract(ZeroRast, Tomi_subset3_sp[,c("x", "y")])
+Tomi_Henk<-raster::extract(ZeroRast, Tomi_subset3_sp[,c("x", "y")])
+Tomi_Niko<-raster::extract(ZeroRast, Tomi_subset3_sp[,c("x", "y")])
+Tomi_Preman<-raster::extract(ZeroRast, Tomi_subset3_sp[,c("x", "y")])
+Tomi_Otto<-raster::extract(ZeroRast, Tomi_subset3_sp[,c("x", "y")])
+Tomi_Katmandun<-raster::extract(Katmandun, Tomi_subset3_sp[,c("x", "y")])
+Tomi_Teju<-raster::extract(Teju, Tomi_subset3_sp[,c("x", "y")])
+Tomi_Chili<-raster::extract(Chili, Tomi_subset3_sp[,c("x", "y")])
+Tomi_Wodan<-raster::extract(Wodan, Tomi_subset3_sp[,c("x", "y")])
+Tomi_Juni<-raster::extract(Juni_rast, Tomi_subset3_sp[,c("x", "y")])
+Tomi_Inul<-raster::extract(Inul_rast, Tomi_subset3_sp[,c("x", "y")])
+Tomi_Kerry <-raster::extract(Kerry_rast, Tomi_subset3_sp[,c("x", "y")])
+Tomi_Mindy <-raster::extract(Mindy_rast, Tomi_subset3_sp[,c("x", "y")])
+Dayak_03_LC<-raster::extract(ZeroRast, Tomi_subset3_sp[,c("x", "y")])
+Helium_03_LC<-raster::extract(ZeroRast, Tomi_subset3_sp[,c("x", "y")])
+Henk_03_LC<-raster::extract(Henk_03_LC, Tomi_subset3_sp[,c("x", "y")])
+Katmandun_03_LC<-raster::extract(ZeroRast, Tomi_subset3_sp[,c("x", "y")])
+Niko_03_LC<-raster::extract(Niko_03_LC, Tomi_subset3_sp[,c("x", "y")])
+Otto_03_LC<-raster::extract(Otto_03_LC, Tomi_subset3_sp[,c("x", "y")])
+Preman_03_LC<-raster::extract(ZeroRast, Tomi_subset3_sp[,c("x", "y")])
+Teju_03_LC<-raster::extract(ZeroRast, Tomi_subset3_sp[,c("x", "y")])
+Chili_03_LC<-raster::extract(ZeroRast, Tomi_subset3_sp[,c("x", "y")])
+Wodan_03_LC<-raster::extract(Wodan_03_LC, Tomi_subset3_sp[,c("x", "y")])
+Tomi_3<-cbind(Tomi_subset3_sp, Tomi_Own, Tomi_Dayak, Tomi_Helium, Tomi_Henk, Tomi_Niko, Tomi_Preman, Tomi_Otto, Tomi_Katmandun, Tomi_Teju, Tomi_Chili, Tomi_Wodan, Tomi_Juni, Tomi_Inul, Tomi_Kerry, Tomi_Mindy,Dayak_03_LC, Helium_03_LC, Henk_03_LC,Katmandun_03_LC, Niko_03_LC,Otto_03_LC , Preman_03_LC, Teju_03_LC, Chili_03_LC, Wodan_03_LC)
+as.data.frame(Tomi_3)
+names(Tomi_3)[8] <- "Own"
+names(Tomi_3)[9] <- "Dayak"
+names(Tomi_3)[10] <- "Helium"
+names(Tomi_3)[11] <- "Henk"
+names(Tomi_3)[12] <- "Niko"
+names(Tomi_3)[13] <- "Preman"
+names(Tomi_3)[14] <- "Otto"
+names(Tomi_3)[15] <- "Katmandun"
+names(Tomi_3)[16] <- "Teju"
+names(Tomi_3)[17] <- "Chili"
+names(Tomi_3)[18] <- "Wodan"
+names(Tomi_3)[19] <- "Juni"
+names(Tomi_3)[20] <- "Inul"
+names(Tomi_3)[21] <- "Kerry"
+names(Tomi_3)[22] <- "Mindy"
+names(Tomi_3)[23]<-"Dayak_LC"
+names(Tomi_3)[24]<-"Helium_LC"
+names(Tomi_3)[25]<-"Henk_LC"
+names(Tomi_3)[26]<-"Katmandun_LC"
+names(Tomi_3)[27]<-"Niko_LC"
+names(Tomi_3)[28]<-"Otto_LC"
+names(Tomi_3)[29]<-"Preman_LC"
+names(Tomi_3)[30]<-"Teju_LC"
+names(Tomi_3)[31]<-"Chili_LC"
+names(Tomi_3)[32]<-"Wodan_LC"
+Tomi_3<-as.data.frame(Tomi_3@data)
+View(Tomi_3)
+
+# create spatial points data frames to extract from specific rasters
+#Tomi
+library(sp)
+Tomi<-raster(AKDE[["Tomi"]] , DF="PDF")
+Tomi_Own<-raster.transformation(Tomi, trans = "stretch", smin = 0, smax = 1)
+sp::plot(Tomi)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Tomi in August 2012
+xy <- Tomi_subset4[,c("x","y")]
+Tomi_subset4_sp <- SpatialPointsDataFrame(coords = xy, data = Tomi_subset4, proj4string = CRS)
+Tomi_Own <- raster::extract(Tomi_Own, Tomi_subset4_sp[,c("x", "y")])
+Tomi_Dayak<-raster::extract(ZeroRast, Tomi_subset4_sp[,c("x", "y")])
+Tomi_Helium<-raster::extract(ZeroRast, Tomi_subset4_sp[,c("x", "y")])
+Tomi_Henk<-raster::extract(ZeroRast, Tomi_subset4_sp[,c("x", "y")])
+Tomi_Niko<-raster::extract(ZeroRast, Tomi_subset4_sp[,c("x", "y")])
+Tomi_Preman<-raster::extract(ZeroRast, Tomi_subset4_sp[,c("x", "y")])
+Tomi_Otto<-raster::extract(ZeroRast, Tomi_subset4_sp[,c("x", "y")])
+Tomi_Katmandun<-raster::extract(Katmandun, Tomi_subset4_sp[,c("x", "y")])
+Tomi_Teju<-raster::extract(Teju, Tomi_subset4_sp[,c("x", "y")])
+Tomi_Chili<-raster::extract(Chili, Tomi_subset4_sp[,c("x", "y")])
+Tomi_Wodan<-raster::extract(Wodan, Tomi_subset4_sp[,c("x", "y")])
+Tomi_Juni<-raster::extract(Juni_rast, Tomi_subset4_sp[,c("x", "y")])
+Tomi_Inul<-raster::extract(Inul_rast, Tomi_subset4_sp[,c("x", "y")])
+Tomi_Kerry <-raster::extract(Kerry_rast, Tomi_subset4_sp[,c("x", "y")])
+Tomi_Mindy <-raster::extract(Mindy_rast, Tomi_subset4_sp[,c("x", "y")])
+Dayak_04_LC<-raster::extract(ZeroRast, Tomi_subset4_sp[,c("x", "y")])
+Helium_04_LC<-raster::extract(ZeroRast, Tomi_subset4_sp[,c("x", "y")])
+Henk_04_LC<-raster::extract(ZeroRast, Tomi_subset4_sp[,c("x", "y")])
+Katmandun_04_LC<-raster::extract(Katmandun_04_LC, Tomi_subset4_sp[,c("x", "y")])
+Niko_04_LC<-raster::extract(ZeroRast, Tomi_subset4_sp[,c("x", "y")])
+Otto_04_LC<-raster::extract(ZeroRast, Tomi_subset4_sp[,c("x", "y")])
+Preman_04_LC<-raster::extract(ZeroRast, Tomi_subset4_sp[,c("x", "y")])
+Teju_04_LC<-raster::extract(ZeroRast, Tomi_subset4_sp[,c("x", "y")])
+Chili_04_LC<-raster::extract(ZeroRast, Tomi_subset4_sp[,c("x", "y")])
+Wodan_04_LC<-raster::extract(Wodan_04_LC, Tomi_subset4_sp[,c("x", "y")])
+Tomi_4<-cbind(Tomi_subset4_sp, Tomi_Own, Tomi_Dayak, Tomi_Helium, Tomi_Henk, Tomi_Niko, Tomi_Preman, Tomi_Otto, Tomi_Katmandun, Tomi_Teju, Tomi_Chili, Tomi_Wodan, Tomi_Juni, Tomi_Inul, Tomi_Kerry, Tomi_Mindy,Dayak_04_LC, Helium_04_LC, Henk_04_LC,Katmandun_04_LC, Niko_04_LC,Otto_04_LC , Preman_04_LC, Teju_04_LC, Chili_04_LC, Wodan_04_LC)
+as.data.frame(Tomi_4)
+names(Tomi_4)[8] <- "Own"
+names(Tomi_4)[9] <- "Dayak"
+names(Tomi_4)[10] <- "Helium"
+names(Tomi_4)[11] <- "Henk"
+names(Tomi_4)[12] <- "Niko"
+names(Tomi_4)[13] <- "Preman"
+names(Tomi_4)[14] <- "Otto"
+names(Tomi_4)[15] <- "Katmandun"
+names(Tomi_4)[16] <- "Teju"
+names(Tomi_4)[17] <- "Chili"
+names(Tomi_4)[18] <- "Wodan"
+names(Tomi_4)[19] <- "Juni"
+names(Tomi_4)[20] <- "Inul"
+names(Tomi_4)[21] <- "Kerry"
+names(Tomi_4)[22] <- "Mindy"
+names(Tomi_4)[23]<-"Dayak_LC"
+names(Tomi_4)[24]<-"Helium_LC"
+names(Tomi_4)[25]<-"Henk_LC"
+names(Tomi_4)[26]<-"Katmandun_LC"
+names(Tomi_4)[27]<-"Niko_LC"
+names(Tomi_4)[28]<-"Otto_LC"
+names(Tomi_4)[29]<-"Preman_LC"
+names(Tomi_4)[30]<-"Teju_LC"
+names(Tomi_4)[31]<-"Chili_LC"
+names(Tomi_4)[32]<-"Wodan_LC"
+Tomi_4<-as.data.frame(Tomi_4@data)
+View(Tomi_4)
+
+
+#Tomi May
+Tomi<-raster(AKDE[["Tomi"]] , DF="PDF")
+Tomi_Own<-raster.transformation(Tomi, trans = "stretch", smin = 0, smax = 1)
+
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Tomi in August 2012
+xy <- Tomi_subset5[,c("x","y")]
+Tomi_subset5_sp <- SpatialPointsDataFrame(coords = xy, data = Tomi_subset5, proj4string = CRS)
+Tomi_Own <- raster::extract(Tomi_Own, Tomi_subset5_sp[,c("x", "y")])
+Tomi_Dayak<-raster::extract(Dayak, Tomi_subset5_sp[,c("x", "y")])
+Tomi_Helium<-raster::extract(ZeroRast, Tomi_subset5_sp[,c("x", "y")])
+Tomi_Henk<-raster::extract(ZeroRast, Tomi_subset5_sp[,c("x", "y")])
+Tomi_Niko<-raster::extract(Niko, Tomi_subset5_sp[,c("x", "y")])
+Tomi_Preman<-raster::extract(ZeroRast, Tomi_subset5_sp[,c("x", "y")])
+Tomi_Otto<-raster::extract(ZeroRast, Tomi_subset5_sp[,c("x", "y")])
+Tomi_Katmandun<-raster::extract(ZeroRast, Tomi_subset5_sp[,c("x", "y")])
+Tomi_Teju<-raster::extract(ZeroRast, Tomi_subset5_sp[,c("x", "y")])
+Tomi_Chili<-raster::extract(Chili, Tomi_subset5_sp[,c("x", "y")])
+Tomi_Wodan<-raster::extract(Wodan, Tomi_subset5_sp[,c("x", "y")])
+Tomi_Juni<-raster::extract(Juni_rast, Tomi_subset5_sp[,c("x", "y")])
+Tomi_Inul<-raster::extract(Inul_rast, Tomi_subset5_sp[,c("x", "y")])
+Tomi_Kerry <-raster::extract(Kerry_rast, Tomi_subset5_sp[,c("x", "y")])
+Tomi_Mindy <-raster::extract(Mindy_rast, Tomi_subset5_sp[,c("x", "y")])
+Dayak_05_LC<-raster::extract(ZeroRast, Tomi_subset5_sp[,c("x", "y")])
+Helium_05_LC<-raster::extract(ZeroRast, Tomi_subset5_sp[,c("x", "y")])
+Henk_05_LC<-raster::extract(ZeroRast, Tomi_subset5_sp[,c("x", "y")])
+Katmandun_05_LC<-raster::extract(ZeroRast, Tomi_subset5_sp[,c("x", "y")])
+Niko_05_LC<-raster::extract(Niko_05_LC, Tomi_subset5_sp[,c("x", "y")])
+Otto_05_LC<-raster::extract(ZeroRast, Tomi_subset5_sp[,c("x", "y")])
+Preman_05_LC<-raster::extract(ZeroRast, Tomi_subset5_sp[,c("x", "y")])
+Teju_05_LC<-raster::extract(ZeroRast, Tomi_subset5_sp[,c("x", "y")])
+Chili_05_LC<-raster::extract(ZeroRast, Tomi_subset5_sp[,c("x", "y")])
+Wodan_05_LC<-raster::extract(Wodan_05_LC, Tomi_subset5_sp[,c("x", "y")])
+Tomi_5<-cbind(Tomi_subset5_sp, Tomi_Own, Tomi_Dayak, Tomi_Helium, Tomi_Henk, Tomi_Niko, Tomi_Preman, Tomi_Otto, Tomi_Katmandun, Tomi_Teju, Tomi_Chili, Tomi_Wodan, Tomi_Juni, Tomi_Inul, Tomi_Kerry, Tomi_Mindy,Dayak_05_LC, Helium_05_LC, Henk_05_LC,Katmandun_05_LC, Niko_05_LC,Otto_05_LC , Preman_05_LC, Teju_05_LC, Chili_05_LC, Wodan_05_LC)
+as.data.frame(Tomi_5)
+names(Tomi_5)[8] <- "Own"
+names(Tomi_5)[9] <- "Dayak"
+names(Tomi_5)[10] <- "Helium"
+names(Tomi_5)[11] <- "Henk"
+names(Tomi_5)[12] <- "Niko"
+names(Tomi_5)[13] <- "Preman"
+names(Tomi_5)[14] <- "Otto"
+names(Tomi_5)[15] <- "Katmandun"
+names(Tomi_5)[16] <- "Teju"
+names(Tomi_5)[17] <- "Chili"
+names(Tomi_5)[18] <- "Wodan"
+names(Tomi_5)[19] <- "Juni"
+names(Tomi_5)[20] <- "Inul"
+names(Tomi_5)[21] <- "Kerry"
+names(Tomi_5)[22] <- "Mindy"
+names(Tomi_5)[23]<-"Dayak_LC"
+names(Tomi_5)[24]<-"Helium_LC"
+names(Tomi_5)[25]<-"Henk_LC"
+names(Tomi_5)[26]<-"Katmandun_LC"
+names(Tomi_5)[27]<-"Niko_LC"
+names(Tomi_5)[28]<-"Otto_LC"
+names(Tomi_5)[29]<-"Preman_LC"
+names(Tomi_5)[30]<-"Teju_LC"
+names(Tomi_5)[31]<-"Chili_LC"
+names(Tomi_5)[32]<-"Wodan_LC"
+Tomi_5<-as.data.frame(Tomi_5@data)
+View(Tomi_5)
+
+
+#Tomi June
+Tomi<-raster(AKDE[["Tomi"]] , DF="PDF")
+Tomi_Own<-raster.transformation(Tomi, trans = "stretch", smin = 0, smax = 1)
+
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Tomi in August 2012
+xy <- Tomi_subset6[,c("x","y")]
+Tomi_subset6_sp <- SpatialPointsDataFrame(coords = xy, data = Tomi_subset6, proj4string = CRS)
+Tomi_Own <- raster::extract(Tomi_Own, Tomi_subset6_sp[,c("x", "y")])
+Tomi_Dayak<-raster::extract(Dayak, Tomi_subset6_sp[,c("x", "y")])
+Tomi_Helium<-raster::extract(ZeroRast, Tomi_subset6_sp[,c("x", "y")])
+Tomi_Henk<-raster::extract(Henk, Tomi_subset6_sp[,c("x", "y")])
+Tomi_Niko<-raster::extract(ZeroRast, Tomi_subset6_sp[,c("x", "y")])
+Tomi_Preman<-raster::extract(ZeroRast, Tomi_subset6_sp[,c("x", "y")])
+Tomi_Otto<-raster::extract(ZeroRast, Tomi_subset6_sp[,c("x", "y")])
+Tomi_Katmandun<-raster::extract(Katmandun, Tomi_subset6_sp[,c("x", "y")])
+Tomi_Teju<-raster::extract(ZeroRast, Tomi_subset6_sp[,c("x", "y")])
+Tomi_Chili<-raster::extract(ZeroRast, Tomi_subset6_sp[,c("x", "y")])
+Tomi_Wodan<-raster::extract(Wodan, Tomi_subset6_sp[,c("x", "y")])
+Tomi_Juni<-raster::extract(Juni_rast, Tomi_subset6_sp[,c("x", "y")])
+Tomi_Inul<-raster::extract(Inul_rast, Tomi_subset6_sp[,c("x", "y")])
+Tomi_Kerry <-raster::extract(Kerry_rast, Tomi_subset6_sp[,c("x", "y")])
+Tomi_Mindy <-raster::extract(Mindy_rast, Tomi_subset6_sp[,c("x", "y")])
+Dayak_06_LC<-raster::extract(Dayak_06_LC, Tomi_subset6_sp[,c("x", "y")])
+Helium_06_LC<-raster::extract(ZeroRast, Tomi_subset6_sp[,c("x", "y")])
+Henk_06_LC<-raster::extract(Henk_06_LC, Tomi_subset6_sp[,c("x", "y")])
+Katmandun_06_LC<-raster::extract(Katmandun_06_LC, Tomi_subset6_sp[,c("x", "y")])
+Niko_06_LC<-raster::extract(ZeroRast, Tomi_subset6_sp[,c("x", "y")])
+Otto_06_LC<-raster::extract(ZeroRast, Tomi_subset6_sp[,c("x", "y")])
+Preman_06_LC<-raster::extract(ZeroRast, Tomi_subset6_sp[,c("x", "y")])
+Teju_06_LC<-raster::extract(ZeroRast, Tomi_subset6_sp[,c("x", "y")])
+Chili_06_LC<-raster::extract(ZeroRast, Tomi_subset6_sp[,c("x", "y")])
+Wodan_06_LC<-raster::extract(Wodan_06_LC, Tomi_subset6_sp[,c("x", "y")])
+Tomi_6<-cbind(Tomi_subset6_sp, Tomi_Own, Tomi_Dayak, Tomi_Helium, Tomi_Henk, Tomi_Niko, Tomi_Preman, Tomi_Otto, Tomi_Katmandun, Tomi_Teju, Tomi_Chili, Tomi_Wodan, Tomi_Juni, Tomi_Inul, Tomi_Kerry, Tomi_Mindy,Dayak_06_LC, Helium_06_LC, Henk_06_LC,Katmandun_06_LC, Niko_06_LC,Otto_06_LC , Preman_06_LC, Teju_06_LC, Chili_06_LC, Wodan_06_LC)
+as.data.frame(Tomi_6)
+names(Tomi_6)[8] <- "Own"
+names(Tomi_6)[9] <- "Dayak"
+names(Tomi_6)[10] <- "Helium"
+names(Tomi_6)[11] <- "Henk"
+names(Tomi_6)[12] <- "Niko"
+names(Tomi_6)[13] <- "Preman"
+names(Tomi_6)[14] <- "Otto"
+names(Tomi_6)[15] <- "Katmandun"
+names(Tomi_6)[16] <- "Teju"
+names(Tomi_6)[17] <- "Chili"
+names(Tomi_6)[18] <- "Wodan"
+names(Tomi_6)[19] <- "Juni"
+names(Tomi_6)[20] <- "Inul"
+names(Tomi_6)[21] <- "Kerry"
+names(Tomi_6)[22] <- "Mindy"
+names(Tomi_6)[23]<-"Dayak_LC"
+names(Tomi_6)[24]<-"Helium_LC"
+names(Tomi_6)[25]<-"Henk_LC"
+names(Tomi_6)[26]<-"Katmandun_LC"
+names(Tomi_6)[27]<-"Niko_LC"
+names(Tomi_6)[28]<-"Otto_LC"
+names(Tomi_6)[29]<-"Preman_LC"
+names(Tomi_6)[30]<-"Teju_LC"
+names(Tomi_6)[31]<-"Chili_LC"
+names(Tomi_6)[32]<-"Wodan_LC"
+Tomi_6<-as.data.frame(Tomi_6@data)
+View(Tomi_6)
+
+
+#Tomi July
+
+Tomi<-raster(AKDE[["Tomi"]] , DF="PDF")
+Tomi_Own<-raster.transformation(Tomi, trans = "stretch", smin = 0, smax = 1)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Tomi in August 2012
+xy <- Tomi_subset7[,c("x","y")]
+Tomi_subset7_sp <- SpatialPointsDataFrame(coords = xy, data = Tomi_subset7, proj4string = CRS)
+Tomi_Own <- raster::extract(Tomi_Own, Tomi_subset7_sp[,c("x", "y")])
+Tomi_Dayak<-raster::extract(ZeroRast, Tomi_subset7_sp[,c("x", "y")])
+Tomi_Helium<-raster::extract(ZeroRast, Tomi_subset7_sp[,c("x", "y")])
+Tomi_Henk<-raster::extract(Henk, Tomi_subset7_sp[,c("x", "y")])
+Tomi_Niko<-raster::extract(Niko, Tomi_subset7_sp[,c("x", "y")])
+Tomi_Preman<-raster::extract(ZeroRast, Tomi_subset7_sp[,c("x", "y")])
+Tomi_Otto<-raster::extract(ZeroRast, Tomi_subset7_sp[,c("x", "y")])
+Tomi_Katmandun<-raster::extract(ZeroRast, Tomi_subset7_sp[,c("x", "y")])
+Tomi_Teju<-raster::extract(ZeroRast, Tomi_subset7_sp[,c("x", "y")])
+Tomi_Chili<-raster::extract(Chili, Tomi_subset7_sp[,c("x", "y")])
+Tomi_Wodan<-raster::extract(Wodan, Tomi_subset7_sp[,c("x", "y")])
+Tomi_Juni<-raster::extract(Juni_rast, Tomi_subset7_sp[,c("x", "y")])
+Tomi_Inul<-raster::extract(Inul_rast, Tomi_subset7_sp[,c("x", "y")])
+Tomi_Kerry <-raster::extract(Kerry_rast, Tomi_subset7_sp[,c("x", "y")])
+Tomi_Mindy <-raster::extract(Mindy_rast, Tomi_subset7_sp[,c("x", "y")])
+Dayak_07_LC<-raster::extract(ZeroRast, Tomi_subset7_sp[,c("x", "y")])
+Helium_07_LC<-raster::extract(ZeroRast, Tomi_subset7_sp[,c("x", "y")])
+Henk_07_LC<-raster::extract(Henk_07_LC, Tomi_subset7_sp[,c("x", "y")])
+Katmandun_07_LC<-raster::extract(ZeroRast, Tomi_subset7_sp[,c("x", "y")])
+Niko_07_LC<-raster::extract(ZeroRast, Tomi_subset7_sp[,c("x", "y")])
+Otto_07_LC<-raster::extract(ZeroRast, Tomi_subset7_sp[,c("x", "y")])
+Preman_07_LC<-raster::extract(ZeroRast, Tomi_subset7_sp[,c("x", "y")])
+Teju_07_LC<-raster::extract(ZeroRast, Tomi_subset7_sp[,c("x", "y")])
+Chili_07_LC<-raster::extract(ZeroRast, Tomi_subset7_sp[,c("x", "y")])
+Wodan_07_LC<-raster::extract(Wodan_07_LC, Tomi_subset7_sp[,c("x", "y")])
+Tomi_7<-cbind(Tomi_subset7_sp, Tomi_Own, Tomi_Dayak, Tomi_Helium, Tomi_Henk, Tomi_Niko, Tomi_Preman, Tomi_Otto, Tomi_Katmandun, Tomi_Teju, Tomi_Chili, Tomi_Wodan, Tomi_Juni, Tomi_Inul, Tomi_Kerry, Tomi_Mindy,Dayak_07_LC, Helium_07_LC, Henk_07_LC,Katmandun_07_LC, Niko_07_LC,Otto_07_LC , Preman_07_LC, Teju_07_LC, Chili_07_LC, Wodan_07_LC)
+as.data.frame(Tomi_7)
+names(Tomi_7)[8] <- "Own"
+names(Tomi_7)[9] <- "Dayak"
+names(Tomi_7)[10] <- "Helium"
+names(Tomi_7)[11] <- "Henk"
+names(Tomi_7)[12] <- "Niko"
+names(Tomi_7)[13] <- "Preman"
+names(Tomi_7)[14] <- "Otto"
+names(Tomi_7)[15] <- "Katmandun"
+names(Tomi_7)[16] <- "Teju"
+names(Tomi_7)[17] <- "Chili"
+names(Tomi_7)[18] <- "Wodan"
+names(Tomi_7)[19] <- "Juni"
+names(Tomi_7)[20] <- "Inul"
+names(Tomi_7)[21] <- "Kerry"
+names(Tomi_7)[22] <- "Mindy"
+names(Tomi_7)[23]<-"Dayak_LC"
+names(Tomi_7)[24]<-"Helium_LC"
+names(Tomi_7)[25]<-"Henk_LC"
+names(Tomi_7)[26]<-"Katmandun_LC"
+names(Tomi_7)[27]<-"Niko_LC"
+names(Tomi_7)[28]<-"Otto_LC"
+names(Tomi_7)[29]<-"Preman_LC"
+names(Tomi_7)[30]<-"Teju_LC"
+names(Tomi_7)[31]<-"Chili_LC"
+names(Tomi_7)[32]<-"Wodan_LC"
+Tomi_7<-as.data.frame(Tomi_7@data)
+
+# Tomi August
+Tomi<-raster(AKDE[["Tomi"]] , DF="PDF")
+Tomi_Own<-raster.transformation(Tomi, trans = "stretch", smin = 0, smax = 1)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Tomi in August 2012
+xy <- Tomi_subset8[,c("x","y")]
+Tomi_subset8_sp <- SpatialPointsDataFrame(coords = xy, data = Tomi_subset8, proj4string = CRS)
+Tomi_Own <- raster::extract(Tomi_Own, Tomi_subset8_sp[,c("x", "y")])
+Tomi_Dayak<-raster::extract(ZeroRast, Tomi_subset8_sp[,c("x", "y")])
+Tomi_Helium<-raster::extract(ZeroRast, Tomi_subset8_sp[,c("x", "y")])
+Tomi_Henk<-raster::extract(Henk, Tomi_subset8_sp[,c("x", "y")])
+Tomi_Niko<-raster::extract(Niko, Tomi_subset8_sp[,c("x", "y")])
+Tomi_Preman<-raster::extract(ZeroRast, Tomi_subset8_sp[,c("x", "y")])
+Tomi_Otto<-raster::extract(Otto, Tomi_subset8_sp[,c("x", "y")])
+Tomi_Katmandun<-raster::extract(ZeroRast, Tomi_subset8_sp[,c("x", "y")])
+Tomi_Teju<-raster::extract(Teju, Tomi_subset8_sp[,c("x", "y")])
+Tomi_Chili<-raster::extract(Chili, Tomi_subset8_sp[,c("x", "y")])
+Tomi_Wodan<-raster::extract(Wodan, Tomi_subset8_sp[,c("x", "y")])
+Tomi_Juni<-raster::extract(Juni_rast, Tomi_subset8_sp[,c("x", "y")])
+Tomi_Inul<-raster::extract(Inul_rast, Tomi_subset8_sp[,c("x", "y")])
+Tomi_Kerry <-raster::extract(Kerry_rast, Tomi_subset8_sp[,c("x", "y")])
+Tomi_Mindy <-raster::extract(Mindy_rast, Tomi_subset8_sp[,c("x", "y")])
+Dayak_08_LC<-raster::extract(ZeroRast, Tomi_subset8_sp[,c("x", "y")])
+Helium_08_LC<-raster::extract(ZeroRast, Tomi_subset8_sp[,c("x", "y")])
+Henk_08_LC<-raster::extract(Henk_08_LC, Tomi_subset8_sp[,c("x", "y")])
+Katmandun_08_LC<-raster::extract(ZeroRast, Tomi_subset8_sp[,c("x", "y")])
+Niko_08_LC<-raster::extract(Niko_08_LC, Tomi_subset8_sp[,c("x", "y")])
+Otto_08_LC<-raster::extract(Otto_08_LC, Tomi_subset8_sp[,c("x", "y")])
+Preman_08_LC<-raster::extract(ZeroRast, Tomi_subset8_sp[,c("x", "y")])
+Teju_08_LC<-raster::extract(Teju_08_LC, Tomi_subset8_sp[,c("x", "y")])
+Chili_08_LC<-raster::extract(Chili_08_LC, Tomi_subset8_sp[,c("x", "y")])
+Wodan_08_LC<-raster::extract(Wodan_08_LC, Tomi_subset8_sp[,c("x", "y")])
+Tomi_8<-cbind(Tomi_subset8_sp, Tomi_Own, Tomi_Dayak, Tomi_Helium, Tomi_Henk, Tomi_Niko, Tomi_Preman, Tomi_Otto, Tomi_Katmandun, Tomi_Teju, Tomi_Chili, Tomi_Wodan, Tomi_Juni, Tomi_Inul, Tomi_Kerry, Tomi_Mindy,Dayak_08_LC, Helium_08_LC, Henk_08_LC,Katmandun_08_LC, Niko_08_LC,Otto_08_LC , Preman_08_LC, Teju_08_LC, Chili_08_LC, Wodan_08_LC)
+as.data.frame(Tomi_8)
+names(Tomi_8)[8] <- "Own"
+names(Tomi_8)[9] <- "Dayak"
+names(Tomi_8)[10] <- "Helium"
+names(Tomi_8)[11] <- "Henk"
+names(Tomi_8)[12] <- "Niko"
+names(Tomi_8)[13] <- "Preman"
+names(Tomi_8)[14] <- "Otto"
+names(Tomi_8)[15] <- "Katmandun"
+names(Tomi_8)[16] <- "Teju"
+names(Tomi_8)[17] <- "Chili"
+names(Tomi_8)[18] <- "Wodan"
+names(Tomi_8)[19] <- "Juni"
+names(Tomi_8)[20] <- "Inul"
+names(Tomi_8)[21] <- "Kerry"
+names(Tomi_8)[22] <- "Mindy"
+names(Tomi_8)[23]<-"Dayak_LC"
+names(Tomi_8)[24]<-"Helium_LC"
+names(Tomi_8)[25]<-"Henk_LC"
+names(Tomi_8)[26]<-"Katmandun_LC"
+names(Tomi_8)[27]<-"Niko_LC"
+names(Tomi_8)[28]<-"Otto_LC"
+names(Tomi_8)[29]<-"Preman_LC"
+names(Tomi_8)[30]<-"Teju_LC"
+names(Tomi_8)[31]<-"Chili_LC"
+names(Tomi_8)[32]<-"Wodan_LC"
+Tomi_8<-as.data.frame(Tomi_8@data)
+
+# Tomi September
+Tomi<-raster(AKDE[["Tomi"]] , DF="PDF")
+Tomi_Own<-raster.transformation(Tomi, trans = "stretch", smin = 0, smax = 1)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Tomi in September 2012
+xy <- Tomi_subset9[,c("x","y")]
+Tomi_subset9_sp <- SpatialPointsDataFrame(coords = xy, data = Tomi_subset9, proj4string = CRS)
+Tomi_Own<- raster::extract(Tomi_Own, Tomi_subset9_sp[,c("x", "y")])
+Tomi_Dayak<-raster::extract(Dayak, Tomi_subset9_sp[,c("x", "y")])
+Tomi_Helium<-raster::extract(Helium, Tomi_subset9_sp[,c("x", "y")])
+Tomi_Henk<-raster::extract(Henk, Tomi_subset9_sp[,c("x", "y")])
+Tomi_Niko<-raster::extract(Niko, Tomi_subset9_sp[,c("x", "y")])
+Tomi_Preman<-raster::extract(ZeroRast, Tomi_subset9_sp[,c("x", "y")])
+Tomi_Otto<-raster::extract(ZeroRast, Tomi_subset9_sp[,c("x", "y")])
+Tomi_Katmandun<-raster::extract(ZeroRast, Tomi_subset9_sp[,c("x", "y")])
+Tomi_Teju<-raster::extract(ZeroRast, Tomi_subset9_sp[,c("x", "y")])
+Tomi_Chili<-raster::extract(Chili, Tomi_subset9_sp[,c("x", "y")])
+Tomi_Wodan<-raster::extract(Wodan, Tomi_subset9_sp[,c("x", "y")])
+Tomi_Juni<-raster::extract(Juni_rast, Tomi_subset9_sp[,c("x", "y")])
+Tomi_Inul<-raster::extract(Inul_rast, Tomi_subset9_sp[,c("x", "y")])
+Tomi_Kerry <-raster::extract(Kerry_rast, Tomi_subset9_sp[,c("x", "y")])
+Tomi_Mindy <-raster::extract(Mindy_rast, Tomi_subset9_sp[,c("x", "y")])
+Dayak_09_LC<-raster::extract(Dayak_09_LC, Tomi_subset9_sp[,c("x", "y")])
+Helium_09_LC<-raster::extract(Helium_09_LC, Tomi_subset9_sp[,c("x", "y")])
+Henk_09_LC<-raster::extract(Henk_09_LC, Tomi_subset9_sp[,c("x", "y")])
+Katmandun_09_LC<-raster::extract(ZeroRast, Tomi_subset9_sp[,c("x", "y")])
+Niko_09_LC<-raster::extract(Niko_09_LC, Tomi_subset9_sp[,c("x", "y")])
+Otto_09_LC<-raster::extract(ZeroRast, Tomi_subset9_sp[,c("x", "y")])
+Preman_09_LC<-raster::extract(ZeroRast, Tomi_subset9_sp[,c("x", "y")])
+Teju_09_LC<-raster::extract(ZeroRast, Tomi_subset9_sp[,c("x", "y")])
+Chili_09_LC<-raster::extract(Chili_09_LC, Tomi_subset9_sp[,c("x", "y")])
+Wodan_09_LC<-raster::extract(Wodan_09_LC, Tomi_subset9_sp[,c("x", "y")])
+Tomi_9<-cbind(Tomi_subset9_sp, Tomi_Own, Tomi_Dayak, Tomi_Helium, Tomi_Henk, Tomi_Niko, Tomi_Preman, Tomi_Otto, Tomi_Katmandun, Tomi_Teju, Tomi_Chili, Tomi_Wodan, Tomi_Juni, Tomi_Inul, Tomi_Kerry, Tomi_Mindy,Dayak_09_LC, Helium_09_LC, Henk_09_LC,Katmandun_09_LC, Niko_09_LC,Otto_09_LC , Preman_09_LC, Teju_09_LC, Chili_09_LC, Wodan_09_LC)
+as.data.frame(Tomi_9)
+names(Tomi_9)[8] <- "Own"
+names(Tomi_9)[9] <- "Dayak"
+names(Tomi_9)[10] <- "Helium"
+names(Tomi_9)[11] <- "Henk"
+names(Tomi_9)[12] <- "Niko"
+names(Tomi_9)[13] <- "Preman"
+names(Tomi_9)[14] <- "Otto"
+names(Tomi_9)[15] <- "Katmandun"
+names(Tomi_9)[16] <- "Teju"
+names(Tomi_9)[17] <- "Chili"
+names(Tomi_9)[18] <- "Wodan"
+names(Tomi_9)[19] <- "Juni"
+names(Tomi_9)[20] <- "Inul"
+names(Tomi_9)[21] <- "Kerry"
+names(Tomi_9)[22] <- "Mindy"
+names(Tomi_9)[23]<-"Dayak_LC"
+names(Tomi_9)[24]<-"Helium_LC"
+names(Tomi_9)[25]<-"Henk_LC"
+names(Tomi_9)[26]<-"Katmandun_LC"
+names(Tomi_9)[27]<-"Niko_LC"
+names(Tomi_9)[28]<-"Otto_LC"
+names(Tomi_9)[29]<-"Preman_LC"
+names(Tomi_9)[30]<-"Teju_LC"
+names(Tomi_9)[31]<-"Chili_LC"
+names(Tomi_9)[32]<-"Wodan_LC"
+Tomi_9<-as.data.frame(Tomi_9@data)
+
+# Tomi October
+Tomi<-raster(AKDE[["Tomi"]] , DF="PDF")
+Tomi_Own<-raster.transformation(Tomi, trans = "stretch", smin = 0, smax = 1)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Tomi in September 2012
+xy <- Tomi_subset10[,c("x","y")]
+Tomi_subset10_sp <- SpatialPointsDataFrame(coords = xy, data = Tomi_subset10, proj4string = CRS)
+Tomi_Own<- raster::extract(Tomi_Own, Tomi_subset10_sp[,c("x", "y")])
+Tomi_Dayak<-raster::extract(Dayak, Tomi_subset10_sp[,c("x", "y")])
+Tomi_Helium<-raster::extract(Helium, Tomi_subset10_sp[,c("x", "y")])
+Tomi_Henk<-raster::extract(Henk, Tomi_subset10_sp[,c("x", "y")])
+Tomi_Niko<-raster::extract(Niko, Tomi_subset10_sp[,c("x", "y")])
+Tomi_Preman<-raster::extract(Preman, Tomi_subset10_sp[,c("x", "y")])
+Tomi_Otto<-raster::extract(ZeroRast, Tomi_subset10_sp[,c("x", "y")])
+Tomi_Katmandun<-raster::extract(ZeroRast, Tomi_subset10_sp[,c("x", "y")])
+Tomi_Teju<-raster::extract(ZeroRast, Tomi_subset10_sp[,c("x", "y")])
+Tomi_Chili<-raster::extract(Chili, Tomi_subset10_sp[,c("x", "y")])
+Tomi_Wodan<-raster::extract(Wodan, Tomi_subset10_sp[,c("x", "y")])
+Tomi_Juni<-raster::extract(Juni_rast, Tomi_subset10_sp[,c("x", "y")])
+Tomi_Inul<-raster::extract(Inul_rast, Tomi_subset10_sp[,c("x", "y")])
+Tomi_Kerry <-raster::extract(Kerry_rast, Tomi_subset10_sp[,c("x", "y")])
+Tomi_Mindy <-raster::extract(Mindy_rast, Tomi_subset10_sp[,c("x", "y")])
+Dayak_10_LC<-raster::extract(Dayak_10_LC, Tomi_subset10_sp[,c("x", "y")])
+Helium_10_LC<-raster::extract(Helium_10_LC, Tomi_subset10_sp[,c("x", "y")])
+Henk_10_LC<-raster::extract(Henk_10_LC, Tomi_subset10_sp[,c("x", "y")])
+Katmandun_10_LC<-raster::extract(ZeroRast, Tomi_subset10_sp[,c("x", "y")])
+Niko_10_LC<-raster::extract(ZeroRast, Tomi_subset10_sp[,c("x", "y")])
+Otto_10_LC<-raster::extract(ZeroRast, Tomi_subset10_sp[,c("x", "y")])
+Preman_10_LC<-raster::extract(ZeroRast, Tomi_subset10_sp[,c("x", "y")])
+Teju_10_LC<-raster::extract(Teju_10_LC, Tomi_subset10_sp[,c("x", "y")])
+Chili_10_LC<-raster::extract(Chili_10_LC, Tomi_subset10_sp[,c("x", "y")])
+Wodan_10_LC<-raster::extract(Wodan_10_LC, Tomi_subset10_sp[,c("x", "y")])
+Tomi_10<-cbind(Tomi_subset10_sp, Tomi_Own, Tomi_Dayak, Tomi_Helium, Tomi_Henk, Tomi_Niko, Tomi_Preman, Tomi_Otto, Tomi_Katmandun, Tomi_Teju, Tomi_Chili, Tomi_Wodan, Tomi_Juni, Tomi_Inul, Tomi_Kerry, Tomi_Mindy,Dayak_10_LC, Helium_10_LC, Henk_10_LC,Katmandun_10_LC, Niko_10_LC,Otto_10_LC , Preman_10_LC, Teju_10_LC, Chili_10_LC, Wodan_10_LC)
+as.data.frame(Tomi_10)
+names(Tomi_10)[8] <- "Own"
+names(Tomi_10)[9] <- "Dayak"
+names(Tomi_10)[10] <- "Helium"
+names(Tomi_10)[11] <- "Henk"
+names(Tomi_10)[12] <- "Niko"
+names(Tomi_10)[13] <- "Preman"
+names(Tomi_10)[14] <- "Otto"
+names(Tomi_10)[15] <- "Katmandun"
+names(Tomi_10)[16] <- "Teju"
+names(Tomi_10)[17] <- "Chili"
+names(Tomi_10)[18] <- "Wodan"
+names(Tomi_10)[19] <- "Juni"
+names(Tomi_10)[20] <- "Inul"
+names(Tomi_10)[21] <- "Kerry"
+names(Tomi_10)[22] <- "Mindy"
+names(Tomi_10)[23]<-"Dayak_LC"
+names(Tomi_10)[24]<-"Helium_LC"
+names(Tomi_10)[25]<-"Henk_LC"
+names(Tomi_10)[26]<-"Katmandun_LC"
+names(Tomi_10)[27]<-"Niko_LC"
+names(Tomi_10)[28]<-"Otto_LC"
+names(Tomi_10)[29]<-"Preman_LC"
+names(Tomi_10)[30]<-"Teju_LC"
+names(Tomi_10)[31]<-"Chili_LC"
+names(Tomi_10)[32]<-"Wodan_LC"
+Tomi_10<-as.data.frame(Tomi_10@data)
+
+#Tomi November
+
+Tomi<-raster(AKDE[["Tomi"]] , DF="PDF")
+Tomi_Own<-raster.transformation(Tomi, trans = "stretch", smin = 0, smax = 1)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Tomi in September 2012
+xy <- Tomi_subset11[,c("x","y")]
+Tomi_subset11_sp <- SpatialPointsDataFrame(coords = xy, data = Tomi_subset11, proj4string = CRS)
+Tomi_Own<- raster::extract(Tomi_Own, Tomi_subset11_sp[,c("x", "y")])
+Tomi_Dayak<-raster::extract(Dayak, Tomi_subset11_sp[,c("x", "y")])
+Tomi_Helium<-raster::extract(Helium, Tomi_subset11_sp[,c("x", "y")])
+Tomi_Henk<-raster::extract(ZeroRast, Tomi_subset11_sp[,c("x", "y")])
+Tomi_Niko<-raster::extract(Niko, Tomi_subset11_sp[,c("x", "y")])
+Tomi_Preman<-raster::extract(Preman, Tomi_subset11_sp[,c("x", "y")])
+Tomi_Otto<-raster::extract(ZeroRast, Tomi_subset11_sp[,c("x", "y")])
+Tomi_Katmandun<-raster::extract(ZeroRast, Tomi_subset11_sp[,c("x", "y")])
+Tomi_Teju<-raster::extract(Teju, Tomi_subset11_sp[,c("x", "y")])
+Tomi_Chili<-raster::extract(Chili, Tomi_subset11_sp[,c("x", "y")])
+Tomi_Wodan<-raster::extract(Wodan, Tomi_subset11_sp[,c("x", "y")])
+Tomi_Juni<-raster::extract(Juni_rast, Tomi_subset11_sp[,c("x", "y")])
+Tomi_Inul<-raster::extract(Inul_rast, Tomi_subset11_sp[,c("x", "y")])
+Tomi_Kerry <-raster::extract(Kerry_rast, Tomi_subset11_sp[,c("x", "y")])
+Tomi_Mindy <-raster::extract(Mindy_rast, Tomi_subset11_sp[,c("x", "y")])
+Dayak_11_LC<-raster::extract(Dayak_11_LC, Tomi_subset11_sp[,c("x", "y")])
+Helium_11_LC<-raster::extract(Helium_11_LC, Tomi_subset11_sp[,c("x", "y")])
+Henk_11_LC<-raster::extract(ZeroRast, Tomi_subset11_sp[,c("x", "y")])
+Katmandun_11_LC<-raster::extract(ZeroRast, Tomi_subset11_sp[,c("x", "y")])
+Niko_11_LC<-raster::extract(Niko_11_LC, Tomi_subset11_sp[,c("x", "y")])
+Otto_11_LC<-raster::extract(ZeroRast, Tomi_subset11_sp[,c("x", "y")])
+Preman_11_LC<-raster::extract(Preman_11_LC, Tomi_subset11_sp[,c("x", "y")])
+Teju_11_LC<-raster::extract(Teju_11_LC, Tomi_subset11_sp[,c("x", "y")])
+Chili_11_LC<-raster::extract(Chili_11_LC, Tomi_subset11_sp[,c("x", "y")])
+Wodan_11_LC<-raster::extract(Wodan_11_LC, Tomi_subset11_sp[,c("x", "y")])
+Tomi_11<-cbind(Tomi_subset11_sp, Tomi_Own, Tomi_Dayak, Tomi_Helium, Tomi_Henk, Tomi_Niko, Tomi_Preman, Tomi_Otto, Tomi_Katmandun, Tomi_Teju, Tomi_Chili, Tomi_Wodan, Tomi_Juni, Tomi_Inul, Tomi_Kerry, Tomi_Mindy,Dayak_11_LC, Helium_11_LC, Henk_11_LC,Katmandun_11_LC, Niko_11_LC,Otto_11_LC , Preman_11_LC, Teju_11_LC, Chili_11_LC, Wodan_11_LC)
+as.data.frame(Tomi_11)
+names(Tomi_11)[8] <- "Own"
+names(Tomi_11)[9] <- "Dayak"
+names(Tomi_11)[10] <- "Helium"
+names(Tomi_11)[11] <- "Henk"
+names(Tomi_11)[12] <- "Niko"
+names(Tomi_11)[13] <- "Preman"
+names(Tomi_11)[14] <- "Otto"
+names(Tomi_11)[15] <- "Katmandun"
+names(Tomi_11)[16] <- "Teju"
+names(Tomi_11)[17] <- "Chili"
+names(Tomi_11)[18] <- "Wodan"
+names(Tomi_11)[19] <- "Juni"
+names(Tomi_11)[20] <- "Inul"
+names(Tomi_11)[21] <- "Kerry"
+names(Tomi_11)[22] <- "Mindy"
+names(Tomi_11)[23]<-"Dayak_LC"
+names(Tomi_11)[24]<-"Helium_LC"
+names(Tomi_11)[25]<-"Henk_LC"
+names(Tomi_11)[26]<-"Katmandun_LC"
+names(Tomi_11)[27]<-"Niko_LC"
+names(Tomi_11)[28]<-"Otto_LC"
+names(Tomi_11)[29]<-"Preman_LC"
+names(Tomi_11)[30]<-"Teju_LC"
+names(Tomi_11)[31]<-"Chili_LC"
+names(Tomi_11)[32]<-"Wodan_LC"
+Tomi_11<-as.data.frame(Tomi_11@data)
+
+#Tomi December
+
+Tomi<-raster(AKDE[["Tomi"]] , DF="PDF")
+Tomi_Own<-raster.transformation(Tomi, trans = "stretch", smin = 0, smax = 1)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Tomi in September 2012
+xy <- Tomi_subset12[,c("x","y")]
+Tomi_subset12_sp <- SpatialPointsDataFrame(coords = xy, data = Tomi_subset12, proj4string = CRS)
+Tomi_Own<- raster::extract(Tomi_Own, Tomi_subset12_sp[,c("x", "y")])
+Tomi_Dayak<-raster::extract(Dayak, Tomi_subset12_sp[,c("x", "y")])
+Tomi_Helium<-raster::extract(ZeroRast, Tomi_subset12_sp[,c("x", "y")])
+Tomi_Henk<-raster::extract(Henk, Tomi_subset12_sp[,c("x", "y")])
+Tomi_Niko<-raster::extract(Niko, Tomi_subset12_sp[,c("x", "y")])
+Tomi_Preman<-raster::extract(Preman, Tomi_subset12_sp[,c("x", "y")])
+Tomi_Otto<-raster::extract(ZeroRast, Tomi_subset12_sp[,c("x", "y")])
+Tomi_Katmandun<-raster::extract(ZeroRast, Tomi_subset12_sp[,c("x", "y")])
+Tomi_Teju<-raster::extract(Teju, Tomi_subset12_sp[,c("x", "y")])
+Tomi_Chili<-raster::extract(Chili, Tomi_subset12_sp[,c("x", "y")])
+Tomi_Wodan<-raster::extract(Wodan, Tomi_subset12_sp[,c("x", "y")])
+Tomi_Juni<-raster::extract(Juni_rast, Tomi_subset12_sp[,c("x", "y")])
+Tomi_Inul<-raster::extract(Inul_rast, Tomi_subset12_sp[,c("x", "y")])
+Tomi_Kerry <-raster::extract(Kerry_rast, Tomi_subset12_sp[,c("x", "y")])
+Tomi_Mindy <-raster::extract(Mindy_rast, Tomi_subset12_sp[,c("x", "y")])
+Dayak_12_LC<-raster::extract(Dayak_12_LC, Tomi_subset12_sp[,c("x", "y")])
+Helium_12_LC<-raster::extract(ZeroRast, Tomi_subset12_sp[,c("x", "y")])
+Henk_12_LC<-raster::extract(Henk_12_LC, Tomi_subset12_sp[,c("x", "y")])
+Katmandun_12_LC<-raster::extract(ZeroRast, Tomi_subset12_sp[,c("x", "y")])
+Niko_12_LC<-raster::extract(Niko_12_LC, Tomi_subset12_sp[,c("x", "y")])
+Otto_12_LC<-raster::extract(ZeroRast, Tomi_subset12_sp[,c("x", "y")])
+Preman_12_LC<-raster::extract(Preman_12_LC, Tomi_subset12_sp[,c("x", "y")])
+Teju_12_LC<-raster::extract(Teju_12_LC, Tomi_subset12_sp[,c("x", "y")])
+Chili_12_LC<-raster::extract(ZeroRast, Tomi_subset12_sp[,c("x", "y")])
+Wodan_12_LC<-raster::extract(ZeroRast, Tomi_subset12_sp[,c("x", "y")])
+Tomi_12<-cbind(Tomi_subset12_sp, Tomi_Own, Tomi_Dayak, Tomi_Helium, Tomi_Henk, Tomi_Niko, Tomi_Preman, Tomi_Otto, Tomi_Katmandun, Tomi_Teju, Tomi_Chili, Tomi_Wodan, Tomi_Juni, Tomi_Inul, Tomi_Kerry, Tomi_Mindy,Dayak_12_LC, Helium_12_LC, Henk_12_LC,Katmandun_12_LC, Niko_12_LC,Otto_12_LC , Preman_12_LC, Teju_12_LC, Chili_12_LC, Wodan_12_LC)
+as.data.frame(Tomi_12)
+names(Tomi_12)[8] <- "Own"
+names(Tomi_12)[9] <- "Dayak"
+names(Tomi_12)[10] <- "Helium"
+names(Tomi_12)[11] <- "Henk"
+names(Tomi_12)[12] <- "Niko"
+names(Tomi_12)[13] <- "Preman"
+names(Tomi_12)[14] <- "Otto"
+names(Tomi_12)[15] <- "Katmandun"
+names(Tomi_12)[16] <- "Teju"
+names(Tomi_12)[17] <- "Chili"
+names(Tomi_12)[18] <- "Wodan"
+names(Tomi_12)[19] <- "Juni"
+names(Tomi_12)[20] <- "Inul"
+names(Tomi_12)[21] <- "Kerry"
+names(Tomi_12)[22] <- "Mindy"
+names(Tomi_12)[23]<-"Dayak_LC"
+names(Tomi_12)[24]<-"Helium_LC"
+names(Tomi_12)[25]<-"Henk_LC"
+names(Tomi_12)[26]<-"Katmandun_LC"
+names(Tomi_12)[27]<-"Niko_LC"
+names(Tomi_12)[28]<-"Otto_LC"
+names(Tomi_12)[29]<-"Preman_LC"
+names(Tomi_12)[30]<-"Teju_LC"
+names(Tomi_12)[31]<-"Chili_LC"
+names(Tomi_12)[32]<-"Wodan_LC"
+Tomi_12<-as.data.frame(Tomi_12@data)
+
+Tomi_df<-rbind(Tomi_3,Tomi_4, Tomi_5, Tomi_6, Tomi_7, Tomi_8, Tomi_9, Tomi_10, Tomi_11, Tomi_12)
+write.csv(Tomi_df, "Tomi_df.csv")
+library(readr)
+Tomi_df <- read_csv("Tomi_df.csv")
+#any NA points within UDs would be 0
+Tomi_df[is.na(Tomi_df)] <- 0
+names(Tomi_df)<-gsub("\\_","",names(Tomi_df))
+
+Tomi_Assoc<-read_csv("TomiAssociations2012.csv")
+Tomi_df<-cbind(Tomi_df, Tomi_Assoc)
+Tomi_df$month <- format(Tomi_df$timestamp, "%m")
+str(Tomi_df)
+
+
+# create spatial points data frames to extract from specific rasters for Wodan
+#Wodan
+library(sp)
+Wodan<-raster(AKDE[["Wodan"]] , DF="PDF")
+Wodan_Own<-raster.transformation(Wodan, trans = "stretch", smin = 0, smax = 1)
+sp::plot(Wodan)
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Wodan in March 2012 and then extract from rasters representing risk for that month
+xy <- Wodan_subset3[,c("x","y")]
+Wodan_subset3_sp <- SpatialPointsDataFrame(coords = xy, data = Wodan_subset3, proj4string = CRS)
+Wodan_Own <- raster::extract(Wodan_Own, Wodan_subset3_sp[,c("x", "y")])
+Wodan_Dayak<-raster::extract(ZeroRast, Wodan_subset3_sp[,c("x", "y")])
+Wodan_Helium<-raster::extract(ZeroRast, Wodan_subset3_sp[,c("x", "y")])
+Wodan_Henk<-raster::extract(ZeroRast, Wodan_subset3_sp[,c("x", "y")])
+Wodan_Niko<-raster::extract(ZeroRast, Wodan_subset3_sp[,c("x", "y")])
+Wodan_Preman<-raster::extract(ZeroRast, Wodan_subset3_sp[,c("x", "y")])
+Wodan_Otto<-raster::extract(ZeroRast, Wodan_subset3_sp[,c("x", "y")])
+Wodan_Katmandun<-raster::extract(Katmandun, Wodan_subset3_sp[,c("x", "y")])
+Wodan_Teju<-raster::extract(Teju, Wodan_subset3_sp[,c("x", "y")])
+Wodan_Chili<-raster::extract(Chili, Wodan_subset3_sp[,c("x", "y")])
+Wodan_Tomi<-raster::extract(Tomi, Wodan_subset3_sp[,c("x", "y")])
+Wodan_Juni<-raster::extract(Juni_rast, Wodan_subset3_sp[,c("x", "y")])
+Wodan_Inul<-raster::extract(Inul_rast, Wodan_subset3_sp[,c("x", "y")])
+Wodan_Kerry <-raster::extract(Kerry_rast, Wodan_subset3_sp[,c("x", "y")])
+Wodan_Mindy <-raster::extract(Mindy_rast, Wodan_subset3_sp[,c("x", "y")])
+Dayak_03_LC<-raster::extract(ZeroRast, Wodan_subset3_sp[,c("x", "y")])
+Helium_03_LC<-raster::extract(ZeroRast, Wodan_subset3_sp[,c("x", "y")])
+Henk_03_LC<-raster::extract(Henk_03_LC, Wodan_subset3_sp[,c("x", "y")])
+Katmandun_03_LC<-raster::extract(ZeroRast, Wodan_subset3_sp[,c("x", "y")])
+Niko_03_LC<-raster::extract(Niko_03_LC, Wodan_subset3_sp[,c("x", "y")])
+Otto_03_LC<-raster::extract(Otto_03_LC, Wodan_subset3_sp[,c("x", "y")])
+Preman_03_LC<-raster::extract(ZeroRast, Wodan_subset3_sp[,c("x", "y")])
+Teju_03_LC<-raster::extract(ZeroRast, Wodan_subset3_sp[,c("x", "y")])
+Chili_03_LC<-raster::extract(ZeroRast, Wodan_subset3_sp[,c("x", "y")])
+Tomi_03_LC<-raster::extract(Tomi_03_LC, Wodan_subset3_sp[,c("x", "y")])
+Wodan_3<-cbind(Wodan_subset3_sp, Wodan_Own, Wodan_Dayak, Wodan_Helium, Wodan_Henk, Wodan_Niko, Wodan_Preman, Wodan_Otto, Wodan_Katmandun, Wodan_Teju, Wodan_Chili, Wodan_Tomi, Wodan_Juni, Wodan_Inul, Wodan_Kerry, Wodan_Mindy,Dayak_03_LC, Helium_03_LC, Henk_03_LC,Katmandun_03_LC, Niko_03_LC,Otto_03_LC , Preman_03_LC, Teju_03_LC, Chili_03_LC, Tomi_03_LC)
+as.data.frame(Wodan_3)
+names(Wodan_3)[8] <- "Own"
+names(Wodan_3)[9] <- "Dayak"
+names(Wodan_3)[10] <- "Helium"
+names(Wodan_3)[11] <- "Henk"
+names(Wodan_3)[12] <- "Niko"
+names(Wodan_3)[13] <- "Preman"
+names(Wodan_3)[14] <- "Otto"
+names(Wodan_3)[15] <- "Katmandun"
+names(Wodan_3)[16] <- "Teju"
+names(Wodan_3)[17] <- "Chili"
+names(Wodan_3)[18] <- "Tomi"
+names(Wodan_3)[19] <- "Juni"
+names(Wodan_3)[20] <- "Inul"
+names(Wodan_3)[21] <- "Kerry"
+names(Wodan_3)[22] <- "Mindy"
+names(Wodan_3)[23]<-"Dayak_LC"
+names(Wodan_3)[24]<-"Helium_LC"
+names(Wodan_3)[25]<-"Henk_LC"
+names(Wodan_3)[26]<-"Katmandun_LC"
+names(Wodan_3)[27]<-"Niko_LC"
+names(Wodan_3)[28]<-"Otto_LC"
+names(Wodan_3)[29]<-"Preman_LC"
+names(Wodan_3)[30]<-"Teju_LC"
+names(Wodan_3)[31]<-"Chili_LC"
+names(Wodan_3)[32]<-"Tomi_LC"
+Wodan_3<-as.data.frame(Wodan_3@data)
+View(Wodan_3)
+
+#Wodan for April 2012
+
+Wodan<-raster(AKDE[["Wodan"]] , DF="PDF")
+Wodan_Own<-raster.transformation(Wodan, trans = "stretch", smin = 0, smax = 1)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+#subset for Wodan in August 2012
+xy <- Wodan_subset4[,c("x","y")]
+Wodan_subset4_sp <- SpatialPointsDataFrame(coords = xy, data = Wodan_subset4, proj4string = CRS)
+Wodan_Own <- raster::extract(Wodan_Own, Wodan_subset4_sp[,c("x", "y")])
+Wodan_Dayak<-raster::extract(ZeroRast, Wodan_subset4_sp[,c("x", "y")])
+Wodan_Helium<-raster::extract(ZeroRast, Wodan_subset4_sp[,c("x", "y")])
+Wodan_Henk<-raster::extract(ZeroRast, Wodan_subset4_sp[,c("x", "y")])
+Wodan_Niko<-raster::extract(ZeroRast, Wodan_subset4_sp[,c("x", "y")])
+Wodan_Preman<-raster::extract(ZeroRast, Wodan_subset4_sp[,c("x", "y")])
+Wodan_Otto<-raster::extract(ZeroRast, Wodan_subset4_sp[,c("x", "y")])
+Wodan_Katmandun<-raster::extract(Katmandun, Wodan_subset4_sp[,c("x", "y")])
+Wodan_Teju<-raster::extract(Teju, Wodan_subset4_sp[,c("x", "y")])
+Wodan_Chili<-raster::extract(Chili, Wodan_subset4_sp[,c("x", "y")])
+Wodan_Tomi<-raster::extract(Tomi, Wodan_subset4_sp[,c("x", "y")])
+Wodan_Juni<-raster::extract(Juni_rast, Wodan_subset4_sp[,c("x", "y")])
+Wodan_Inul<-raster::extract(Inul_rast, Wodan_subset4_sp[,c("x", "y")])
+Wodan_Kerry <-raster::extract(Kerry_rast, Wodan_subset4_sp[,c("x", "y")])
+Wodan_Mindy <-raster::extract(Mindy_rast, Wodan_subset4_sp[,c("x", "y")])
+Dayak_04_LC<-raster::extract(ZeroRast, Wodan_subset4_sp[,c("x", "y")])
+Helium_04_LC<-raster::extract(ZeroRast, Wodan_subset4_sp[,c("x", "y")])
+Henk_04_LC<-raster::extract(ZeroRast, Wodan_subset4_sp[,c("x", "y")])
+Katmandun_04_LC<-raster::extract(Katmandun_04_LC, Wodan_subset4_sp[,c("x", "y")])
+Niko_04_LC<-raster::extract(ZeroRast, Wodan_subset4_sp[,c("x", "y")])
+Otto_04_LC<-raster::extract(ZeroRast, Wodan_subset4_sp[,c("x", "y")])
+Preman_04_LC<-raster::extract(ZeroRast, Wodan_subset4_sp[,c("x", "y")])
+Teju_04_LC<-raster::extract(ZeroRast, Wodan_subset4_sp[,c("x", "y")])
+Chili_04_LC<-raster::extract(ZeroRast, Wodan_subset4_sp[,c("x", "y")])
+Tomi_04_LC<-raster::extract(Tomi_04_LC, Wodan_subset4_sp[,c("x", "y")])
+Wodan_4<-cbind(Wodan_subset4_sp, Wodan_Own, Wodan_Dayak, Wodan_Helium, Wodan_Henk, Wodan_Niko, Wodan_Preman, Wodan_Otto, Wodan_Katmandun, Wodan_Teju, Wodan_Chili, Wodan_Tomi, Wodan_Juni, Wodan_Inul, Wodan_Kerry, Wodan_Mindy,Dayak_04_LC, Helium_04_LC, Henk_04_LC,Katmandun_04_LC, Niko_04_LC,Otto_04_LC , Preman_04_LC, Teju_04_LC, Chili_04_LC, Tomi_04_LC)
+as.data.frame(Wodan_4)
+names(Wodan_4)[8] <- "Own"
+names(Wodan_4)[9] <- "Dayak"
+names(Wodan_4)[10] <- "Helium"
+names(Wodan_4)[11] <- "Henk"
+names(Wodan_4)[12] <- "Niko"
+names(Wodan_4)[13] <- "Preman"
+names(Wodan_4)[14] <- "Otto"
+names(Wodan_4)[15] <- "Katmandun"
+names(Wodan_4)[16] <- "Teju"
+names(Wodan_4)[17] <- "Chili"
+names(Wodan_4)[18] <- "Tomi"
+names(Wodan_4)[19] <- "Juni"
+names(Wodan_4)[20] <- "Inul"
+names(Wodan_4)[21] <- "Kerry"
+names(Wodan_4)[22] <- "Mindy"
+names(Wodan_4)[23]<-"Dayak_LC"
+names(Wodan_4)[24]<-"Helium_LC"
+names(Wodan_4)[25]<-"Henk_LC"
+names(Wodan_4)[26]<-"Katmandun_LC"
+names(Wodan_4)[27]<-"Niko_LC"
+names(Wodan_4)[28]<-"Otto_LC"
+names(Wodan_4)[29]<-"Preman_LC"
+names(Wodan_4)[30]<-"Teju_LC"
+names(Wodan_4)[31]<-"Chili_LC"
+names(Wodan_4)[32]<-"Tomi_LC"
+Wodan_4<-as.data.frame(Wodan_4@data)
+View(Wodan_4)
+
+#Wodan May
+Wodan<-raster(AKDE[["Wodan"]] , DF="PDF")
+Wodan_Own<-raster.transformation(Wodan, trans = "stretch", smin = 0, smax = 1)
+
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Wodan in August 2012
+xy <- Wodan_subset5[,c("x","y")]
+Wodan_subset5_sp <- SpatialPointsDataFrame(coords = xy, data = Wodan_subset5, proj4string = CRS)
+Wodan_Own <- raster::extract(Wodan_Own, Wodan_subset5_sp[,c("x", "y")])
+Wodan_Dayak<-raster::extract(Dayak, Wodan_subset5_sp[,c("x", "y")])
+Wodan_Helium<-raster::extract(ZeroRast, Wodan_subset5_sp[,c("x", "y")])
+Wodan_Henk<-raster::extract(ZeroRast, Wodan_subset5_sp[,c("x", "y")])
+Wodan_Niko<-raster::extract(Niko, Wodan_subset5_sp[,c("x", "y")])
+Wodan_Preman<-raster::extract(ZeroRast, Wodan_subset5_sp[,c("x", "y")])
+Wodan_Otto<-raster::extract(ZeroRast, Wodan_subset5_sp[,c("x", "y")])
+Wodan_Katmandun<-raster::extract(ZeroRast, Wodan_subset5_sp[,c("x", "y")])
+Wodan_Teju<-raster::extract(ZeroRast, Wodan_subset5_sp[,c("x", "y")])
+Wodan_Chili<-raster::extract(Chili, Wodan_subset5_sp[,c("x", "y")])
+Wodan_Tomi<-raster::extract(Tomi, Wodan_subset5_sp[,c("x", "y")])
+Wodan_Juni<-raster::extract(Juni_rast, Wodan_subset5_sp[,c("x", "y")])
+Wodan_Inul<-raster::extract(Inul_rast, Wodan_subset5_sp[,c("x", "y")])
+Wodan_Kerry <-raster::extract(Kerry_rast, Wodan_subset5_sp[,c("x", "y")])
+Wodan_Mindy <-raster::extract(Mindy_rast, Wodan_subset5_sp[,c("x", "y")])
+Dayak_05_LC<-raster::extract(ZeroRast, Wodan_subset5_sp[,c("x", "y")])
+Helium_05_LC<-raster::extract(ZeroRast, Wodan_subset5_sp[,c("x", "y")])
+Henk_05_LC<-raster::extract(ZeroRast, Wodan_subset5_sp[,c("x", "y")])
+Katmandun_05_LC<-raster::extract(ZeroRast, Wodan_subset5_sp[,c("x", "y")])
+Niko_05_LC<-raster::extract(Niko_05_LC, Wodan_subset5_sp[,c("x", "y")])
+Otto_05_LC<-raster::extract(ZeroRast, Wodan_subset5_sp[,c("x", "y")])
+Preman_05_LC<-raster::extract(ZeroRast, Wodan_subset5_sp[,c("x", "y")])
+Teju_05_LC<-raster::extract(ZeroRast, Wodan_subset5_sp[,c("x", "y")])
+Chili_05_LC<-raster::extract(ZeroRast, Wodan_subset5_sp[,c("x", "y")])
+Tomi_05_LC<-raster::extract(Tomi_05_LC, Wodan_subset5_sp[,c("x", "y")])
+Wodan_5<-cbind(Wodan_subset5_sp, Wodan_Own, Wodan_Dayak, Wodan_Helium, Wodan_Henk, Wodan_Niko, Wodan_Preman, Wodan_Otto, Wodan_Katmandun, Wodan_Teju, Wodan_Chili, Wodan_Tomi, Wodan_Juni, Wodan_Inul, Wodan_Kerry, Wodan_Mindy,Dayak_05_LC, Helium_05_LC, Henk_05_LC,Katmandun_05_LC, Niko_05_LC,Otto_05_LC , Preman_05_LC, Teju_05_LC, Chili_05_LC, Tomi_05_LC)
+as.data.frame(Wodan_5)
+names(Wodan_5)[8] <- "Own"
+names(Wodan_5)[9] <- "Dayak"
+names(Wodan_5)[10] <- "Helium"
+names(Wodan_5)[11] <- "Henk"
+names(Wodan_5)[12] <- "Niko"
+names(Wodan_5)[13] <- "Preman"
+names(Wodan_5)[14] <- "Otto"
+names(Wodan_5)[15] <- "Katmandun"
+names(Wodan_5)[16] <- "Teju"
+names(Wodan_5)[17] <- "Chili"
+names(Wodan_5)[18] <- "Tomi"
+names(Wodan_5)[19] <- "Juni"
+names(Wodan_5)[20] <- "Inul"
+names(Wodan_5)[21] <- "Kerry"
+names(Wodan_5)[22] <- "Mindy"
+names(Wodan_5)[23]<-"Dayak_LC"
+names(Wodan_5)[24]<-"Helium_LC"
+names(Wodan_5)[25]<-"Henk_LC"
+names(Wodan_5)[26]<-"Katmandun_LC"
+names(Wodan_5)[27]<-"Niko_LC"
+names(Wodan_5)[28]<-"Otto_LC"
+names(Wodan_5)[29]<-"Preman_LC"
+names(Wodan_5)[30]<-"Teju_LC"
+names(Wodan_5)[31]<-"Chili_LC"
+names(Wodan_5)[32]<-"Tomi_LC"
+Wodan_5<-as.data.frame(Wodan_5@data)
+View(Wodan_5)
+
+
+#Wodan June
+Wodan<-raster(AKDE[["Wodan"]] , DF="PDF")
+Wodan_Own<-raster.transformation(Wodan, trans = "stretch", smin = 0, smax = 1)
+
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Wodan in August 2012
+xy <- Wodan_subset6[,c("x","y")]
+Wodan_subset6_sp <- SpatialPointsDataFrame(coords = xy, data = Wodan_subset6, proj4string = CRS)
+Wodan_Own <- raster::extract(Wodan_Own, Wodan_subset6_sp[,c("x", "y")])
+Wodan_Dayak<-raster::extract(Dayak, Wodan_subset6_sp[,c("x", "y")])
+Wodan_Helium<-raster::extract(ZeroRast, Wodan_subset6_sp[,c("x", "y")])
+Wodan_Henk<-raster::extract(Henk, Wodan_subset6_sp[,c("x", "y")])
+Wodan_Niko<-raster::extract(ZeroRast, Wodan_subset6_sp[,c("x", "y")])
+Wodan_Preman<-raster::extract(ZeroRast, Wodan_subset6_sp[,c("x", "y")])
+Wodan_Otto<-raster::extract(ZeroRast, Wodan_subset6_sp[,c("x", "y")])
+Wodan_Katmandun<-raster::extract(Katmandun, Wodan_subset6_sp[,c("x", "y")])
+Wodan_Teju<-raster::extract(ZeroRast, Wodan_subset6_sp[,c("x", "y")])
+Wodan_Chili<-raster::extract(ZeroRast, Wodan_subset6_sp[,c("x", "y")])
+Wodan_Tomi<-raster::extract(Tomi, Wodan_subset6_sp[,c("x", "y")])
+Wodan_Juni<-raster::extract(Juni_rast, Wodan_subset6_sp[,c("x", "y")])
+Wodan_Inul<-raster::extract(Inul_rast, Wodan_subset6_sp[,c("x", "y")])
+Wodan_Kerry <-raster::extract(Kerry_rast, Wodan_subset6_sp[,c("x", "y")])
+Wodan_Mindy <-raster::extract(Mindy_rast, Wodan_subset6_sp[,c("x", "y")])
+Dayak_06_LC<-raster::extract(Dayak_06_LC, Wodan_subset6_sp[,c("x", "y")])
+Helium_06_LC<-raster::extract(ZeroRast, Wodan_subset6_sp[,c("x", "y")])
+Henk_06_LC<-raster::extract(Henk_06_LC, Wodan_subset6_sp[,c("x", "y")])
+Katmandun_06_LC<-raster::extract(Katmandun_06_LC, Wodan_subset6_sp[,c("x", "y")])
+Niko_06_LC<-raster::extract(ZeroRast, Wodan_subset6_sp[,c("x", "y")])
+Otto_06_LC<-raster::extract(ZeroRast, Wodan_subset6_sp[,c("x", "y")])
+Preman_06_LC<-raster::extract(ZeroRast, Wodan_subset6_sp[,c("x", "y")])
+Teju_06_LC<-raster::extract(ZeroRast, Wodan_subset6_sp[,c("x", "y")])
+Chili_06_LC<-raster::extract(ZeroRast, Wodan_subset6_sp[,c("x", "y")])
+Tomi_06_LC<-raster::extract(ZeroRast, Wodan_subset6_sp[,c("x", "y")])
+Wodan_6<-cbind(Wodan_subset6_sp, Wodan_Own, Wodan_Dayak, Wodan_Helium, Wodan_Henk, Wodan_Niko, Wodan_Preman, Wodan_Otto, Wodan_Katmandun, Wodan_Teju, Wodan_Chili, Wodan_Tomi, Wodan_Juni, Wodan_Inul, Wodan_Kerry, Wodan_Mindy,Dayak_06_LC, Helium_06_LC, Henk_06_LC,Katmandun_06_LC, Niko_06_LC,Otto_06_LC , Preman_06_LC, Teju_06_LC, Chili_06_LC, Tomi_06_LC)
+as.data.frame(Wodan_6)
+names(Wodan_6)[8] <- "Own"
+names(Wodan_6)[9] <- "Dayak"
+names(Wodan_6)[10] <- "Helium"
+names(Wodan_6)[11] <- "Henk"
+names(Wodan_6)[12] <- "Niko"
+names(Wodan_6)[13] <- "Preman"
+names(Wodan_6)[14] <- "Otto"
+names(Wodan_6)[15] <- "Katmandun"
+names(Wodan_6)[16] <- "Teju"
+names(Wodan_6)[17] <- "Chili"
+names(Wodan_6)[18] <- "Tomi"
+names(Wodan_6)[19] <- "Juni"
+names(Wodan_6)[20] <- "Inul"
+names(Wodan_6)[21] <- "Kerry"
+names(Wodan_6)[22] <- "Mindy"
+names(Wodan_6)[23]<-"Dayak_LC"
+names(Wodan_6)[24]<-"Helium_LC"
+names(Wodan_6)[25]<-"Henk_LC"
+names(Wodan_6)[26]<-"Katmandun_LC"
+names(Wodan_6)[27]<-"Niko_LC"
+names(Wodan_6)[28]<-"Otto_LC"
+names(Wodan_6)[29]<-"Preman_LC"
+names(Wodan_6)[30]<-"Teju_LC"
+names(Wodan_6)[31]<-"Chili_LC"
+names(Wodan_6)[32]<-"Tomi_LC"
+Wodan_6<-as.data.frame(Wodan_6@data)
+View(Wodan_6)
+
+#Wodan July
+
+Wodan<-raster(AKDE[["Wodan"]] , DF="PDF")
+Wodan_Own<-raster.transformation(Wodan, trans = "stretch", smin = 0, smax = 1)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Wodan in August 2012
+xy <- Wodan_subset7[,c("x","y")]
+Wodan_subset7_sp <- SpatialPointsDataFrame(coords = xy, data = Wodan_subset7, proj4string = CRS)
+Wodan_Own <- raster::extract(Wodan_Own, Wodan_subset7_sp[,c("x", "y")])
+Wodan_Dayak<-raster::extract(ZeroRast, Wodan_subset7_sp[,c("x", "y")])
+Wodan_Helium<-raster::extract(ZeroRast, Wodan_subset7_sp[,c("x", "y")])
+Wodan_Henk<-raster::extract(Henk, Wodan_subset7_sp[,c("x", "y")])
+Wodan_Niko<-raster::extract(Niko, Wodan_subset7_sp[,c("x", "y")])
+Wodan_Preman<-raster::extract(ZeroRast, Wodan_subset7_sp[,c("x", "y")])
+Wodan_Otto<-raster::extract(ZeroRast, Wodan_subset7_sp[,c("x", "y")])
+Wodan_Katmandun<-raster::extract(ZeroRast, Wodan_subset7_sp[,c("x", "y")])
+Wodan_Teju<-raster::extract(ZeroRast, Wodan_subset7_sp[,c("x", "y")])
+Wodan_Chili<-raster::extract(Chili, Wodan_subset7_sp[,c("x", "y")])
+Wodan_Tomi<-raster::extract(Tomi, Wodan_subset7_sp[,c("x", "y")])
+Wodan_Juni<-raster::extract(Juni_rast, Wodan_subset7_sp[,c("x", "y")])
+Wodan_Inul<-raster::extract(Inul_rast, Wodan_subset7_sp[,c("x", "y")])
+Wodan_Kerry <-raster::extract(Kerry_rast, Wodan_subset7_sp[,c("x", "y")])
+Wodan_Mindy <-raster::extract(Mindy_rast, Wodan_subset7_sp[,c("x", "y")])
+Dayak_07_LC<-raster::extract(ZeroRast, Wodan_subset7_sp[,c("x", "y")])
+Helium_07_LC<-raster::extract(ZeroRast, Wodan_subset7_sp[,c("x", "y")])
+Henk_07_LC<-raster::extract(Henk_07_LC, Wodan_subset7_sp[,c("x", "y")])
+Katmandun_07_LC<-raster::extract(ZeroRast, Wodan_subset7_sp[,c("x", "y")])
+Niko_07_LC<-raster::extract(ZeroRast, Wodan_subset7_sp[,c("x", "y")])
+Otto_07_LC<-raster::extract(ZeroRast, Wodan_subset7_sp[,c("x", "y")])
+Preman_07_LC<-raster::extract(ZeroRast, Wodan_subset7_sp[,c("x", "y")])
+Teju_07_LC<-raster::extract(ZeroRast, Wodan_subset7_sp[,c("x", "y")])
+Chili_07_LC<-raster::extract(ZeroRast, Wodan_subset7_sp[,c("x", "y")])
+Tomi_07_LC<-raster::extract(Tomi_07_LC, Wodan_subset7_sp[,c("x", "y")])
+Wodan_7<-cbind(Wodan_subset7_sp, Wodan_Own, Wodan_Dayak, Wodan_Helium, Wodan_Henk, Wodan_Niko, Wodan_Preman, Wodan_Otto, Wodan_Katmandun, Wodan_Teju, Wodan_Chili, Wodan_Tomi, Wodan_Juni, Wodan_Inul, Wodan_Kerry, Wodan_Mindy,Dayak_07_LC, Helium_07_LC, Henk_07_LC,Katmandun_07_LC, Niko_07_LC,Otto_07_LC , Preman_07_LC, Teju_07_LC, Chili_07_LC, Tomi_07_LC)
+as.data.frame(Wodan_7)
+names(Wodan_7)[8] <- "Own"
+names(Wodan_7)[9] <- "Dayak"
+names(Wodan_7)[10] <- "Helium"
+names(Wodan_7)[11] <- "Henk"
+names(Wodan_7)[12] <- "Niko"
+names(Wodan_7)[13] <- "Preman"
+names(Wodan_7)[14] <- "Otto"
+names(Wodan_7)[15] <- "Katmandun"
+names(Wodan_7)[16] <- "Teju"
+names(Wodan_7)[17] <- "Chili"
+names(Wodan_7)[18] <- "Tomi"
+names(Wodan_7)[19] <- "Juni"
+names(Wodan_7)[20] <- "Inul"
+names(Wodan_7)[21] <- "Kerry"
+names(Wodan_7)[22] <- "Mindy"
+names(Wodan_7)[23]<-"Dayak_LC"
+names(Wodan_7)[24]<-"Helium_LC"
+names(Wodan_7)[25]<-"Henk_LC"
+names(Wodan_7)[26]<-"Katmandun_LC"
+names(Wodan_7)[27]<-"Niko_LC"
+names(Wodan_7)[28]<-"Otto_LC"
+names(Wodan_7)[29]<-"Preman_LC"
+names(Wodan_7)[30]<-"Teju_LC"
+names(Wodan_7)[31]<-"Chili_LC"
+names(Wodan_7)[32]<-"Tomi_LC"
+Wodan_7<-as.data.frame(Wodan_7@data)
+
+
+# Wodan August
+Wodan<-raster(AKDE[["Wodan"]] , DF="PDF")
+Wodan_Own<-raster.transformation(Wodan, trans = "stretch", smin = 0, smax = 1)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Wodan in August 2012
+xy <- Wodan_subset8[,c("x","y")]
+Wodan_subset8_sp <- SpatialPointsDataFrame(coords = xy, data = Wodan_subset8, proj4string = CRS)
+Wodan_Own <- raster::extract(Wodan_Own, Wodan_subset8_sp[,c("x", "y")])
+Wodan_Dayak<-raster::extract(ZeroRast, Wodan_subset8_sp[,c("x", "y")])
+Wodan_Helium<-raster::extract(ZeroRast, Wodan_subset8_sp[,c("x", "y")])
+Wodan_Henk<-raster::extract(Henk, Wodan_subset8_sp[,c("x", "y")])
+Wodan_Niko<-raster::extract(Niko, Wodan_subset8_sp[,c("x", "y")])
+Wodan_Preman<-raster::extract(ZeroRast, Wodan_subset8_sp[,c("x", "y")])
+Wodan_Otto<-raster::extract(Otto, Wodan_subset8_sp[,c("x", "y")])
+Wodan_Katmandun<-raster::extract(ZeroRast, Wodan_subset8_sp[,c("x", "y")])
+Wodan_Teju<-raster::extract(Teju, Wodan_subset8_sp[,c("x", "y")])
+Wodan_Chili<-raster::extract(Chili, Wodan_subset8_sp[,c("x", "y")])
+Wodan_Tomi<-raster::extract(Tomi, Wodan_subset8_sp[,c("x", "y")])
+Wodan_Juni<-raster::extract(Juni_rast, Wodan_subset8_sp[,c("x", "y")])
+Wodan_Inul<-raster::extract(Inul_rast, Wodan_subset8_sp[,c("x", "y")])
+Wodan_Kerry <-raster::extract(Kerry_rast, Wodan_subset8_sp[,c("x", "y")])
+Wodan_Mindy <-raster::extract(Mindy_rast, Wodan_subset8_sp[,c("x", "y")])
+Dayak_08_LC<-raster::extract(ZeroRast, Wodan_subset8_sp[,c("x", "y")])
+Helium_08_LC<-raster::extract(ZeroRast, Wodan_subset8_sp[,c("x", "y")])
+Henk_08_LC<-raster::extract(Henk_08_LC, Wodan_subset8_sp[,c("x", "y")])
+Katmandun_08_LC<-raster::extract(ZeroRast, Wodan_subset8_sp[,c("x", "y")])
+Niko_08_LC<-raster::extract(Niko_08_LC, Wodan_subset8_sp[,c("x", "y")])
+Otto_08_LC<-raster::extract(Otto_08_LC, Wodan_subset8_sp[,c("x", "y")])
+Preman_08_LC<-raster::extract(ZeroRast, Wodan_subset8_sp[,c("x", "y")])
+Teju_08_LC<-raster::extract(Teju_08_LC, Wodan_subset8_sp[,c("x", "y")])
+Chili_08_LC<-raster::extract(Chili_08_LC, Wodan_subset8_sp[,c("x", "y")])
+Tomi_08_LC<-raster::extract(ZeroRast, Wodan_subset8_sp[,c("x", "y")])
+as.data.frame(Wodan_subset8_sp)
+Wodan_8<-cbind(Wodan_subset8_sp, Wodan_Own, Wodan_Dayak, Wodan_Helium, Wodan_Henk, Wodan_Niko, Wodan_Preman, Wodan_Otto, Wodan_Katmandun, Wodan_Teju, Wodan_Chili, Wodan_Tomi, Wodan_Juni, Wodan_Inul, Wodan_Kerry, Wodan_Mindy,Dayak_08_LC, Helium_08_LC, Henk_08_LC,Katmandun_08_LC, Niko_08_LC,Otto_08_LC , Preman_08_LC, Teju_08_LC, Chili_08_LC, Tomi_08_LC)
+as.data.frame(Wodan_8)
+names(Wodan_8)[8] <- "Own"
+names(Wodan_8)[9] <- "Dayak"
+names(Wodan_8)[10] <- "Helium"
+names(Wodan_8)[11] <- "Henk"
+names(Wodan_8)[12] <- "Niko"
+names(Wodan_8)[13] <- "Preman"
+names(Wodan_8)[14] <- "Otto"
+names(Wodan_8)[15] <- "Katmandun"
+names(Wodan_8)[16] <- "Teju"
+names(Wodan_8)[17] <- "Chili"
+names(Wodan_8)[18] <- "Tomi"
+names(Wodan_8)[19] <- "Juni"
+names(Wodan_8)[20] <- "Inul"
+names(Wodan_8)[21] <- "Kerry"
+names(Wodan_8)[22] <- "Mindy"
+names(Wodan_8)[23]<-"Dayak_LC"
+names(Wodan_8)[24]<-"Helium_LC"
+names(Wodan_8)[25]<-"Henk_LC"
+names(Wodan_8)[26]<-"Katmandun_LC"
+names(Wodan_8)[27]<-"Niko_LC"
+names(Wodan_8)[28]<-"Otto_LC"
+names(Wodan_8)[29]<-"Preman_LC"
+names(Wodan_8)[30]<-"Teju_LC"
+names(Wodan_8)[31]<-"Chili_LC"
+names(Wodan_8)[32]<-"Tomi_LC"
+Wodan_8<-as.data.frame(Wodan_8@data)
+
+# Wodan September
+Wodan<-raster(AKDE[["Wodan"]] , DF="PDF")
+Wodan_Own<-raster.transformation(Wodan, trans = "stretch", smin = 0, smax = 1)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Wodan in September 2012
+xy <- Wodan_subset9[,c("x","y")]
+Wodan_subset9_sp <- SpatialPointsDataFrame(coords = xy, data = Wodan_subset9, proj4string = CRS)
+Wodan_Own<- raster::extract(Wodan_Own, Wodan_subset9_sp[,c("x", "y")])
+Wodan_Dayak<-raster::extract(Dayak, Wodan_subset9_sp[,c("x", "y")])
+Wodan_Helium<-raster::extract(Helium, Wodan_subset9_sp[,c("x", "y")])
+Wodan_Henk<-raster::extract(Henk, Wodan_subset9_sp[,c("x", "y")])
+Wodan_Niko<-raster::extract(Niko, Wodan_subset9_sp[,c("x", "y")])
+Wodan_Preman<-raster::extract(ZeroRast, Wodan_subset9_sp[,c("x", "y")])
+Wodan_Otto<-raster::extract(ZeroRast, Wodan_subset9_sp[,c("x", "y")])
+Wodan_Katmandun<-raster::extract(ZeroRast, Wodan_subset9_sp[,c("x", "y")])
+Wodan_Teju<-raster::extract(ZeroRast, Wodan_subset9_sp[,c("x", "y")])
+Wodan_Chili<-raster::extract(Chili, Wodan_subset9_sp[,c("x", "y")])
+Wodan_Tomi<-raster::extract(Tomi, Wodan_subset9_sp[,c("x", "y")])
+Wodan_Juni<-raster::extract(Juni_rast, Wodan_subset9_sp[,c("x", "y")])
+Wodan_Inul<-raster::extract(Inul_rast, Wodan_subset9_sp[,c("x", "y")])
+Wodan_Kerry <-raster::extract(Kerry_rast, Wodan_subset9_sp[,c("x", "y")])
+Wodan_Mindy <-raster::extract(Mindy_rast, Wodan_subset9_sp[,c("x", "y")])
+Dayak_09_LC<-raster::extract(Dayak_09_LC, Wodan_subset9_sp[,c("x", "y")])
+Helium_09_LC<-raster::extract(Helium_09_LC, Wodan_subset9_sp[,c("x", "y")])
+Henk_09_LC<-raster::extract(Henk_09_LC, Wodan_subset9_sp[,c("x", "y")])
+Katmandun_09_LC<-raster::extract(ZeroRast, Wodan_subset9_sp[,c("x", "y")])
+Niko_09_LC<-raster::extract(Niko_09_LC, Wodan_subset9_sp[,c("x", "y")])
+Otto_09_LC<-raster::extract(ZeroRast, Wodan_subset9_sp[,c("x", "y")])
+Preman_09_LC<-raster::extract(ZeroRast, Wodan_subset9_sp[,c("x", "y")])
+Teju_09_LC<-raster::extract(ZeroRast, Wodan_subset9_sp[,c("x", "y")])
+Chili_09_LC<-raster::extract(Chili_09_LC, Wodan_subset9_sp[,c("x", "y")])
+Tomi_09_LC<-raster::extract(Tomi_09_LC, Wodan_subset9_sp[,c("x", "y")])
+Wodan_9<-cbind(Wodan_subset9_sp, Wodan_Own, Wodan_Dayak, Wodan_Helium, Wodan_Henk, Wodan_Niko, Wodan_Preman, Wodan_Otto, Wodan_Katmandun, Wodan_Teju, Wodan_Chili, Wodan_Tomi, Wodan_Juni, Wodan_Inul, Wodan_Kerry, Wodan_Mindy,Dayak_09_LC, Helium_09_LC, Henk_09_LC,Katmandun_09_LC, Niko_09_LC,Otto_09_LC , Preman_09_LC, Teju_09_LC, Chili_09_LC, Tomi_09_LC)
+as.data.frame(Wodan_9)
+names(Wodan_9)[8] <- "Own"
+names(Wodan_9)[9] <- "Dayak"
+names(Wodan_9)[10] <- "Helium"
+names(Wodan_9)[11] <- "Henk"
+names(Wodan_9)[12] <- "Niko"
+names(Wodan_9)[13] <- "Preman"
+names(Wodan_9)[14] <- "Otto"
+names(Wodan_9)[15] <- "Katmandun"
+names(Wodan_9)[16] <- "Teju"
+names(Wodan_9)[17] <- "Chili"
+names(Wodan_9)[18] <- "Tomi"
+names(Wodan_9)[19] <- "Juni"
+names(Wodan_9)[20] <- "Inul"
+names(Wodan_9)[21] <- "Kerry"
+names(Wodan_9)[22] <- "Mindy"
+names(Wodan_9)[23]<-"Dayak_LC"
+names(Wodan_9)[24]<-"Helium_LC"
+names(Wodan_9)[25]<-"Henk_LC"
+names(Wodan_9)[26]<-"Katmandun_LC"
+names(Wodan_9)[27]<-"Niko_LC"
+names(Wodan_9)[28]<-"Otto_LC"
+names(Wodan_9)[29]<-"Preman_LC"
+names(Wodan_9)[30]<-"Teju_LC"
+names(Wodan_9)[31]<-"Chili_LC"
+names(Wodan_9)[32]<-"Tomi_LC"
+Wodan_9<-as.data.frame(Wodan_9@data)
+
+# Wodan October
+Wodan<-raster(AKDE[["Wodan"]] , DF="PDF")
+Wodan_Own<-raster.transformation(Wodan, trans = "stretch", smin = 0, smax = 1)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Wodan in September 2012
+xy <- Wodan_subset10[,c("x","y")]
+Wodan_subset10_sp <- SpatialPointsDataFrame(coords = xy, data = Wodan_subset10, proj4string = CRS)
+Wodan_Own<- raster::extract(Wodan_Own, Wodan_subset10_sp[,c("x", "y")])
+Wodan_Dayak<-raster::extract(Dayak, Wodan_subset10_sp[,c("x", "y")])
+Wodan_Helium<-raster::extract(Helium, Wodan_subset10_sp[,c("x", "y")])
+Wodan_Henk<-raster::extract(Henk, Wodan_subset10_sp[,c("x", "y")])
+Wodan_Niko<-raster::extract(Niko, Wodan_subset10_sp[,c("x", "y")])
+Wodan_Preman<-raster::extract(Preman, Wodan_subset10_sp[,c("x", "y")])
+Wodan_Otto<-raster::extract(ZeroRast, Wodan_subset10_sp[,c("x", "y")])
+Wodan_Katmandun<-raster::extract(ZeroRast, Wodan_subset10_sp[,c("x", "y")])
+Wodan_Teju<-raster::extract(ZeroRast, Wodan_subset10_sp[,c("x", "y")])
+Wodan_Chili<-raster::extract(Chili, Wodan_subset10_sp[,c("x", "y")])
+Wodan_Tomi<-raster::extract(Tomi, Wodan_subset10_sp[,c("x", "y")])
+Wodan_Juni<-raster::extract(Juni_rast, Wodan_subset10_sp[,c("x", "y")])
+Wodan_Inul<-raster::extract(Inul_rast, Wodan_subset10_sp[,c("x", "y")])
+Wodan_Kerry <-raster::extract(Kerry_rast, Wodan_subset10_sp[,c("x", "y")])
+Wodan_Mindy <-raster::extract(Mindy_rast, Wodan_subset10_sp[,c("x", "y")])
+Dayak_10_LC<-raster::extract(Dayak_10_LC, Wodan_subset10_sp[,c("x", "y")])
+Helium_10_LC<-raster::extract(Helium_10_LC, Wodan_subset10_sp[,c("x", "y")])
+Henk_10_LC<-raster::extract(Henk_10_LC, Wodan_subset10_sp[,c("x", "y")])
+Katmandun_10_LC<-raster::extract(ZeroRast, Wodan_subset10_sp[,c("x", "y")])
+Niko_10_LC<-raster::extract(ZeroRast, Wodan_subset10_sp[,c("x", "y")])
+Otto_10_LC<-raster::extract(ZeroRast, Wodan_subset10_sp[,c("x", "y")])
+Preman_10_LC<-raster::extract(ZeroRast, Wodan_subset10_sp[,c("x", "y")])
+Teju_10_LC<-raster::extract(Teju_10_LC, Wodan_subset10_sp[,c("x", "y")])
+Chili_10_LC<-raster::extract(Chili_10_LC, Wodan_subset10_sp[,c("x", "y")])
+Tomi_10_LC<-raster::extract(Tomi_10_LC, Wodan_subset10_sp[,c("x", "y")])
+Wodan_10<-cbind(Wodan_subset10_sp, Wodan_Own, Wodan_Dayak, Wodan_Helium, Wodan_Henk, Wodan_Niko, Wodan_Preman, Wodan_Otto, Wodan_Katmandun, Wodan_Teju, Wodan_Chili, Wodan_Tomi, Wodan_Juni, Wodan_Inul, Wodan_Kerry, Wodan_Mindy,Dayak_10_LC, Helium_10_LC, Henk_10_LC,Katmandun_10_LC, Niko_10_LC,Otto_10_LC , Preman_10_LC, Teju_10_LC, Chili_10_LC, Tomi_10_LC)
+as.data.frame(Wodan_10)
+names(Wodan_10)[8] <- "Own"
+names(Wodan_10)[9] <- "Dayak"
+names(Wodan_10)[10] <- "Helium"
+names(Wodan_10)[11] <- "Henk"
+names(Wodan_10)[12] <- "Niko"
+names(Wodan_10)[13] <- "Preman"
+names(Wodan_10)[14] <- "Otto"
+names(Wodan_10)[15] <- "Katmandun"
+names(Wodan_10)[16] <- "Teju"
+names(Wodan_10)[17] <- "Chili"
+names(Wodan_10)[18] <- "Tomi"
+names(Wodan_10)[19] <- "Juni"
+names(Wodan_10)[20] <- "Inul"
+names(Wodan_10)[21] <- "Kerry"
+names(Wodan_10)[22] <- "Mindy"
+names(Wodan_10)[23]<-"Dayak_LC"
+names(Wodan_10)[24]<-"Helium_LC"
+names(Wodan_10)[25]<-"Henk_LC"
+names(Wodan_10)[26]<-"Katmandun_LC"
+names(Wodan_10)[27]<-"Niko_LC"
+names(Wodan_10)[28]<-"Otto_LC"
+names(Wodan_10)[29]<-"Preman_LC"
+names(Wodan_10)[30]<-"Teju_LC"
+names(Wodan_10)[31]<-"Chili_LC"
+names(Wodan_10)[32]<-"Tomi_LC"
+Wodan_10<-as.data.frame(Wodan_10@data)
+
+#Wodan November
+
+Wodan<-raster(AKDE[["Wodan"]] , DF="PDF")
+Wodan_Own<-raster.transformation(Wodan, trans = "stretch", smin = 0, smax = 1)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Wodan in September 2012
+xy <- Wodan_subset11[,c("x","y")]
+Wodan_subset11_sp <- SpatialPointsDataFrame(coords = xy, data = Wodan_subset11, proj4string = CRS)
+Wodan_Own<- raster::extract(Wodan_Own, Wodan_subset11_sp[,c("x", "y")])
+Wodan_Dayak<-raster::extract(Dayak, Wodan_subset11_sp[,c("x", "y")])
+Wodan_Helium<-raster::extract(Helium, Wodan_subset11_sp[,c("x", "y")])
+Wodan_Henk<-raster::extract(ZeroRast, Wodan_subset11_sp[,c("x", "y")])
+Wodan_Niko<-raster::extract(Niko, Wodan_subset11_sp[,c("x", "y")])
+Wodan_Preman<-raster::extract(Preman, Wodan_subset11_sp[,c("x", "y")])
+Wodan_Otto<-raster::extract(ZeroRast, Wodan_subset11_sp[,c("x", "y")])
+Wodan_Katmandun<-raster::extract(ZeroRast, Wodan_subset11_sp[,c("x", "y")])
+Wodan_Teju<-raster::extract(Teju, Wodan_subset11_sp[,c("x", "y")])
+Wodan_Chili<-raster::extract(Chili, Wodan_subset11_sp[,c("x", "y")])
+Wodan_Tomi<-raster::extract(Tomi, Wodan_subset11_sp[,c("x", "y")])
+Wodan_Juni<-raster::extract(Juni_rast, Wodan_subset11_sp[,c("x", "y")])
+Wodan_Inul<-raster::extract(Inul_rast, Wodan_subset11_sp[,c("x", "y")])
+Wodan_Kerry <-raster::extract(Kerry_rast, Wodan_subset11_sp[,c("x", "y")])
+Wodan_Mindy <-raster::extract(Mindy_rast, Wodan_subset11_sp[,c("x", "y")])
+Dayak_11_LC<-raster::extract(Dayak_11_LC, Wodan_subset11_sp[,c("x", "y")])
+Helium_11_LC<-raster::extract(Helium_11_LC, Wodan_subset11_sp[,c("x", "y")])
+Henk_11_LC<-raster::extract(ZeroRast, Wodan_subset11_sp[,c("x", "y")])
+Katmandun_11_LC<-raster::extract(ZeroRast, Wodan_subset11_sp[,c("x", "y")])
+Niko_11_LC<-raster::extract(Niko_11_LC, Wodan_subset11_sp[,c("x", "y")])
+Otto_11_LC<-raster::extract(ZeroRast, Wodan_subset11_sp[,c("x", "y")])
+Preman_11_LC<-raster::extract(Preman_11_LC, Wodan_subset11_sp[,c("x", "y")])
+Teju_11_LC<-raster::extract(Teju_11_LC, Wodan_subset11_sp[,c("x", "y")])
+Chili_11_LC<-raster::extract(Chili_11_LC, Wodan_subset11_sp[,c("x", "y")])
+Tomi_11_LC<-raster::extract(Tomi_11_LC, Wodan_subset11_sp[,c("x", "y")])
+Wodan_11<-cbind(Wodan_subset11_sp, Wodan_Own, Wodan_Dayak, Wodan_Helium, Wodan_Henk, Wodan_Niko, Wodan_Preman, Wodan_Otto, Wodan_Katmandun, Wodan_Teju, Wodan_Chili, Wodan_Tomi, Wodan_Juni, Wodan_Inul, Wodan_Kerry, Wodan_Mindy,Dayak_11_LC, Helium_11_LC, Henk_11_LC,Katmandun_11_LC, Niko_11_LC,Otto_11_LC , Preman_11_LC, Teju_11_LC, Chili_11_LC, Tomi_11_LC)
+as.data.frame(Wodan_11)
+names(Wodan_11)[8] <- "Own"
+names(Wodan_11)[9] <- "Dayak"
+names(Wodan_11)[10] <- "Helium"
+names(Wodan_11)[11] <- "Henk"
+names(Wodan_11)[12] <- "Niko"
+names(Wodan_11)[13] <- "Preman"
+names(Wodan_11)[14] <- "Otto"
+names(Wodan_11)[15] <- "Katmandun"
+names(Wodan_11)[16] <- "Teju"
+names(Wodan_11)[17] <- "Chili"
+names(Wodan_11)[18] <- "Tomi"
+names(Wodan_11)[19] <- "Juni"
+names(Wodan_11)[20] <- "Inul"
+names(Wodan_11)[21] <- "Kerry"
+names(Wodan_11)[22] <- "Mindy"
+names(Wodan_11)[23]<-"Dayak_LC"
+names(Wodan_11)[24]<-"Helium_LC"
+names(Wodan_11)[25]<-"Henk_LC"
+names(Wodan_11)[26]<-"Katmandun_LC"
+names(Wodan_11)[27]<-"Niko_LC"
+names(Wodan_11)[28]<-"Otto_LC"
+names(Wodan_11)[29]<-"Preman_LC"
+names(Wodan_11)[30]<-"Teju_LC"
+names(Wodan_11)[31]<-"Chili_LC"
+names(Wodan_11)[32]<-"Tomi_LC"
+Wodan_11<-as.data.frame(Wodan_11@data)
+
+#Wodan December
+
+Wodan<-raster(AKDE[["Wodan"]] , DF="PDF")
+Wodan_Own<-raster.transformation(Wodan, trans = "stretch", smin = 0, smax = 1)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+library(sp)
+library(raster)
+#subset for Wodan in September 2012
+xy <- Wodan_subset12[,c("x","y")]
+Wodan_subset12_sp <- SpatialPointsDataFrame(coords = xy, data = Wodan_subset12, proj4string = CRS)
+Wodan_Own<- raster::extract(Wodan_Own, Wodan_subset12_sp[,c("x", "y")])
+Wodan_Dayak<-raster::extract(Dayak, Wodan_subset12_sp[,c("x", "y")])
+Wodan_Helium<-raster::extract(ZeroRast, Wodan_subset12_sp[,c("x", "y")])
+Wodan_Henk<-raster::extract(Henk, Wodan_subset12_sp[,c("x", "y")])
+Wodan_Niko<-raster::extract(Niko, Wodan_subset12_sp[,c("x", "y")])
+Wodan_Preman<-raster::extract(Preman, Wodan_subset12_sp[,c("x", "y")])
+Wodan_Otto<-raster::extract(ZeroRast, Wodan_subset12_sp[,c("x", "y")])
+Wodan_Katmandun<-raster::extract(ZeroRast, Wodan_subset12_sp[,c("x", "y")])
+Wodan_Teju<-raster::extract(Teju, Wodan_subset12_sp[,c("x", "y")])
+Wodan_Chili<-raster::extract(Chili, Wodan_subset12_sp[,c("x", "y")])
+Wodan_Tomi<-raster::extract(Tomi, Wodan_subset12_sp[,c("x", "y")])
+Wodan_Juni<-raster::extract(Juni_rast, Wodan_subset12_sp[,c("x", "y")])
+Wodan_Inul<-raster::extract(Inul_rast, Wodan_subset12_sp[,c("x", "y")])
+Wodan_Kerry <-raster::extract(Kerry_rast, Wodan_subset12_sp[,c("x", "y")])
+Wodan_Mindy <-raster::extract(Mindy_rast, Wodan_subset12_sp[,c("x", "y")])
+Dayak_12_LC<-raster::extract(Dayak_12_LC, Wodan_subset12_sp[,c("x", "y")])
+Helium_12_LC<-raster::extract(ZeroRast, Wodan_subset12_sp[,c("x", "y")])
+Henk_12_LC<-raster::extract(Henk_12_LC, Wodan_subset12_sp[,c("x", "y")])
+Katmandun_12_LC<-raster::extract(ZeroRast, Wodan_subset12_sp[,c("x", "y")])
+Niko_12_LC<-raster::extract(Niko_12_LC, Wodan_subset12_sp[,c("x", "y")])
+Otto_12_LC<-raster::extract(ZeroRast, Wodan_subset12_sp[,c("x", "y")])
+Preman_12_LC<-raster::extract(Preman_12_LC, Wodan_subset12_sp[,c("x", "y")])
+Teju_12_LC<-raster::extract(Teju_12_LC, Wodan_subset12_sp[,c("x", "y")])
+Chili_12_LC<-raster::extract(ZeroRast, Wodan_subset12_sp[,c("x", "y")])
+Tomi_12_LC<-raster::extract(ZeroRast, Wodan_subset12_sp[,c("x", "y")])
+Wodan_12<-cbind(Wodan_subset12_sp, Wodan_Own, Wodan_Dayak, Wodan_Helium, Wodan_Henk, Wodan_Niko, Wodan_Preman, Wodan_Otto, Wodan_Katmandun, Wodan_Teju, Wodan_Chili, Wodan_Tomi, Wodan_Juni, Wodan_Inul, Wodan_Kerry, Wodan_Mindy,Dayak_12_LC, Helium_12_LC, Henk_12_LC,Katmandun_12_LC, Niko_12_LC,Otto_12_LC , Preman_12_LC, Teju_12_LC, Chili_12_LC, Tomi_12_LC)
+as.data.frame(Wodan_12)
+names(Wodan_12)[8] <- "Own"
+names(Wodan_12)[9] <- "Dayak"
+names(Wodan_12)[10] <- "Helium"
+names(Wodan_12)[11] <- "Henk"
+names(Wodan_12)[12] <- "Niko"
+names(Wodan_12)[13] <- "Preman"
+names(Wodan_12)[14] <- "Otto"
+names(Wodan_12)[15] <- "Katmandun"
+names(Wodan_12)[16] <- "Teju"
+names(Wodan_12)[17] <- "Chili"
+names(Wodan_12)[18] <- "Tomi"
+names(Wodan_12)[19] <- "Juni"
+names(Wodan_12)[20] <- "Inul"
+names(Wodan_12)[21] <- "Kerry"
+names(Wodan_12)[22] <- "Mindy"
+names(Wodan_12)[23]<-"Dayak_LC"
+names(Wodan_12)[24]<-"Helium_LC"
+names(Wodan_12)[25]<-"Henk_LC"
+names(Wodan_12)[26]<-"Katmandun_LC"
+names(Wodan_12)[27]<-"Niko_LC"
+names(Wodan_12)[28]<-"Otto_LC"
+names(Wodan_12)[29]<-"Preman_LC"
+names(Wodan_12)[30]<-"Teju_LC"
+names(Wodan_12)[31]<-"Chili_LC"
+names(Wodan_12)[32]<-"Tomi_LC"
+Wodan_12<-as.data.frame(Wodan_12@data)
+
+library(readr)
+Wodan_df<-rbind(Wodan_3,Wodan_4, Wodan_5, Wodan_6, Wodan_7, Wodan_8, Wodan_9, Wodan_10, Wodan_11, Wodan_12)
+write.csv(Wodan_df, "Wodan_df.csv")
+Wodan_df<-read_csv("Wodan_df.csv")
+
+Wodan_df[is.na(Wodan_df)] <- 0
+names(Wodan_df)<-gsub("\\_","",names(Wodan_df))
+
+# Add association data for Wodan in 2012 manually taken from the access database and saved in the LC Folder
+Wodan_Assoc<-read.csv("Wodan_Assoc_Female_2012.csv")
+
+# join the two datasets
+Wodan_df<-cbind(Wodan_df, Wodan_Assoc)
+str(Wodan_df)

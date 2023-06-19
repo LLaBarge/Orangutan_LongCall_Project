@@ -34,7 +34,7 @@ elapsed <- function(x)
   y <- abs(as.duration(x[2:length(x)] %--% x[1:(length(x)-1)]))
   y >= 10*60
 }
-uanan_GPS_to_Movebank<-Tuanan_ %>%
+Tuanan_GPS_to_Movebank<-Tuanan_ %>%
   group_split(ID) %>%  
   map_dfr(~ .[c(T, if (nrow(.) > 1) elapsed(.$timestamp)),])
 str(Tuanan_GPS_to_Movebank)
@@ -89,21 +89,6 @@ str(Avail_pts)
 PT<-rep("Available",times=2222)
 Avail_pts$PT<-PT
 
-
-# export rasters with probability distribution function as a proxy for competition risk
-# create separate per individual/year to keep track
-library(raster)
-
-#create individual raster files for competition risk / prob of
-# encounter with potential receptive females
-# use nearest OD distribution to the date of data collection
-# individuals chosen by looking at Tuanan presence records
-
-library(spatialEco)
-library(climateStability)
-ZeroRast<-Tuanan_r
-vals <- NA
-ZeroRast <- setValues(ZeroRast, vals)
 
 # get long call data on movebank
 # These data were manually put on movebank
@@ -195,6 +180,7 @@ Wodan_df[is.na(Wodan_df)] <- 0
 # Add association data for each individual which has come manually from the Tuanan Database
 library(data.table)
 Chili_Associations <- read_csv("Chili_Associations.csv")
+Chili_df<-as.data.frame(Chili_df)
 Chili_Associations<-as.data.frame(Chili_Associations)
 
 # format time so that timestamps can be matched up for a rolling join
@@ -205,7 +191,6 @@ Chili_Associations$Timestamp1<-as.POSIXct(x = as.character(Chili_Associations$Ti
 
 # already ran this script before, but if starting from raw data would need to include this for the long call data
 Chili_df$Timestamp<-as.POSIXct(x = as.character(Chili_df$timestamp))
-str(Chili_Associations)
 
 # set DT for data.table to roll on
 Chili_Associations$DT<-as.numeric(Chili_Associations$Timestamp1)
@@ -244,6 +229,7 @@ Chili_df$Association<-Chili_df$`Party Size`
 Chili_df$Association[Chili_df$Association == 1 ] <- 0
 Chili_df$Association[Chili_df$Association >= 2 ] <- 1
 
+write.csv(Chili_df, file="Chili_df.csv")
 
 # Henk has no associations during data collection in 2012
 
@@ -286,6 +272,8 @@ Niko_df[is.na(Niko_df)] <- 0
 Niko_df$Association[Niko_df$Association == 1 ] <- 0
 Niko_df$Association[Niko_df$Association >= 2 ] <- 1
 
+str(Niko_df)
+write.csv(Niko_df, "Niko_df.csv")
 # Teju
 Teju_Associations <- read_csv("Teju_Associations.csv")
 
@@ -324,6 +312,7 @@ View(Teju_df)
 # a one or zero for associations
 Teju_df$Association[Teju_df$Association == 1 ] <- 0
 Teju_df$Association[Teju_df$Association >= 2 ] <- 1
+write.csv(Teju_df, file="Teju_df.csv")
 
 # Tomi
 

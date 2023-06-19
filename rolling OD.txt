@@ -1,0 +1,592 @@
+sessionInfo()
+
+#R version 4.1.3 (2022-03-10)
+#Platform: x86_64-w64-mingw32/x64 (64-bit)
+#Running under: Windows 10 x64 (build 22621)
+#other attached packages:
+#  [1] amt_0.1.4    readr_2.0.1  raster_3.6-3 sp_1.4-5     ctmm_0.6.2  
+
+
+#need the following packages. 
+library(raster)
+library(tidyverse)
+library(amt)
+
+
+# load the data for each individual
+
+load(file="Chili_df.csv")
+load(file="Henk_df.csv")
+load(file="Niko_df.csv")
+load(file="Teju_df.csv")
+load(file="Tomi_df.csv")
+load(file="Wodan_df.csv")
+
+# get the datasets for each individual animal
+# Chili
+# set the response variable to numeric and set the timestamps for each individual
+Chili_df$PT<-as.numeric(Chili_df$PT)
+strftime(x=Chili_df$timestamp, format="%Y-%m-%d %H:%M:%S")
+Chili_df$time <- format(Chili_df$timestamp,'%H:%M')
+Chili_df$month <- format(Chili_df$timestamp,'%m')
+Chili_df$month<-as.factor(Chili_df$month)
+Chili_df[is.na(Chili_df)] <- 0
+str(Chili_df)
+
+#Chili
+Henk_df$PT<-as.numeric(Henk_df$PT)
+strftime(x=Henk_df$timestamp, format="%Y-%m-%d %H:%M:%S")
+Henk_df$time <- format(Henk_df$timestamp,'%H:%M')
+Henk_df$month <- format(Henk_df$timestamp,'%m')
+Henk_df$month<-as.factor(Henk_df$month)
+Henk_df[is.na(Henk_df)] <- 0
+str(Henk_df)
+#Niko
+Niko_df$PT<-as.numeric(Niko_df$PT)
+strftime(x=Niko_df$timestamp, format="%Y-%m-%d %H:%M:%S")
+Niko_df$time <- format(Niko_df$timestamp,'%H:%M')
+Niko_df$month <- format(Niko_df$timestamp,'%m')
+Niko_df$month<-as.factor(Niko_df$month)
+Niko_df[is.na(Niko_df)] <- 0
+str(Niko_df)
+# Teju
+Teju_df$PT<-as.numeric(Teju_df$PT)
+strftime(x=Teju_df$timestamp, format="%Y-%m-%d %H:%M:%S")
+Teju_df$time <- format(Teju_df$timestamp,'%H:%M')
+Teju_df$month <- format(Teju_df$timestamp,'%m')
+Teju_df$month<-as.factor(Teju_df$month)
+Teju_df[is.na(Teju_df)] <- 0
+str(Teju_df)
+#Tomi
+Tomi_df$PT<-as.numeric(Tomi_df$PT)
+strftime(x=Tomi_df$timestamp, format="%Y-%m-%d %H:%M:%S")
+Tomi_df$time <- format(Tomi_df$timestamp,'%H:%M')
+Tomi_df$month <- format(Tomi_df$timestamp,'%m')
+Tomi_df$month<-as.factor(Tomi_df$month)
+Tomi_df[is.na(Tomi_df)] <- 0
+str(Tomi_df)
+# Wodan
+Wodan_df$PT<-as.numeric(Wodan_df$PT)
+strftime(x=Wodan_df$timestamp, format="%Y-%m-%d %H:%M:%S")
+Wodan_df$time <- format(Wodan_df$timestamp,'%H:%M')
+Wodan_df$month <- format(Wodan_df$timestamp,'%m')
+Wodan_df$month<-as.factor(Wodan_df$month)
+Wodan_df[is.na(Wodan_df)] <- 0
+str(Wodan_df)
+
+# in addition to loading data of individual competitors
+LongCallsCombined<-read.csv(file="LongCalls_all.csv")
+
+LongCalls_to_movebank<-read.csv(file="LongCalls_to_movebank.csv")
+
+
+
+str(LongCallsCombined)
+
+coordinates(LongCallsCombined) <- c("longitude", "latitude")
+proj4string(LongCallsCombined) <- CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs")
+LC_UTM <- spTransform(LongCallsCombined, CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south"))
+LC_UTM<-as.data.frame(LC_UTM)
+str(LC_UTM)
+LC_<-LC_UTM%>% dplyr::select('id', "longitude", "latitude", 'Timestamp') # select only variables used to make occurrence distributions
+
+# change to x and y
+LongCallsCombined$y_<-LongCallsCombined$y
+LongCallsCombined$x_<-LongCallsCombined$x
+
+# timestamp in a recognizable format
+LongCallsCombined$time<-strftime(x=LongCallsCombined$timestamp, format="%Y-%m-%d %H:%M:%S")
+
+LongCallsCombined$time<-as.POSIXct(LongCallsCombined$timestamp, format = "%Y-%m-%d %H:%M:%S")
+str(LongCallsCombined)
+
+# if two individuals called at once, this would be considered duplicates, we add one second
+# do the same with Chili just for consistency
+LC <- rle(as.numeric(LongCallsCombined$time))$lengths
+LC
+# [1] 1 1 1
+
+to.add <- sequence(LC) - 1
+to.add
+# [1] 0 0 0  
+
+# add one second to avoid duplicates between GPS points and long call locations
+
+LongCallsCombined$time <- LongCallsCombined$time + as.difftime(to.add, unit = "secs")
+LongCallsCombined$time
+
+LC_<-LongCallsCombined[!duplicated(LongCallsCombined$time),]
+
+str(LC_)
+
+
+LC_wodan<-LC_[LC_$ID != "Wodan", ]
+LC_Chili<-LC_[LC_$ID != "Chili", ]
+LC_Henk<-LC_[LC_$ID != "Henk", ]
+LC_Niko<-LC_[LC_$ID != "Niko", ]
+LC_Teju<-LC_[LC_$ID != "Teju", ]
+LC_Tomi<-LC_[LC_$ID != "Tomi", ]
+
+# select once again only columns used to make a track
+LC_wodan<-LC_wodan%>% dplyr::select('x_', 'y_', 'time')
+LC_Chili<-LC_Chili%>% dplyr::select('x_', 'y_', 'time')
+LC_Henk<-LC_Henk%>% dplyr::select('x_', 'y_', 'time')
+LC_Niko<-LC_Niko%>% dplyr::select('x_', 'y_', 'time')
+LC_Teju<-LC_Teju%>% dplyr::select('x_', 'y_', 'time')
+LC_Tomi<-LC_Tomi%>% dplyr::select('x_', 'y_', 'time')
+
+
+
+# get rid of rows where there is an NA for location or time
+table(is.na(LC_wodan))
+LC_wodan<-na.omit(LC_wodan)
+
+table(is.na(LC_Chili))
+LC_Chili<-na.omit(LC_Chili)
+
+table(is.na(LC_Henk))
+LC_Henk<-na.omit(LC_Henk)
+
+table(is.na(LC_Niko))
+LC_Niko<-na.omit(LC_Niko)
+
+table(is.na(LC_Teju))
+LC_Teju<-na.omit(LC_Teju)
+
+table(is.na(LC_Tomi))
+LC_Tomi<-na.omit(LC_Tomi)
+
+
+
+# change ID name for tracks
+
+Chili_df$id<-Chili_df$ID 
+Henk_df$id<-Henk_df$ID
+Niko_df$id<-Niko_df$ID
+Teju_df$id<-Teju_df$ID
+Tomi_df$id<-Tomi_df$ID
+Wodan_df$id<-Wodan_df$ID
+
+Chili_df$x_<-Chili_df$x 
+Henk_df$x_<-Henk_df$x
+Niko_df$x_<-Niko_df$x
+Teju_df$x_<-Teju_df$x
+Tomi_df$x_<-Tomi_df$x
+Wodan_df$x_<-Wodan_df$x
+
+Chili_df$y_<-Chili_df$y 
+Henk_df$y_<-Henk_df$y
+Niko_df$y_<-Niko_df$y
+Teju_df$y_<-Teju_df$y
+Tomi_df$y_<-Tomi_df$y
+Wodan_df$y_<-Wodan_df$y
+
+Chili_df$time<-Chili_df$timestamp 
+Henk_df$time<-Henk_df$timestamp
+Niko_df$time<-Niko_df$timestamp
+Teju_df$time<-Teju_df$timestamp
+Tomi_df$time<-Tomi_df$timestamp
+Wodan_df$time<-Wodan_df$timestamp
+
+Chili_df<-as.data.frame(Chili_df)
+
+
+# then select x,y, timestamp, and id
+Chili<-Chili_df %>%
+  dplyr::select(x_, y_, timestamp, id)
+Henk<-Henk_df %>%
+  dplyr::select(x_, y_, timestamp, id)
+Niko<-Niko_df %>%
+  dplyr::select(x_, y_, timestamp, id)
+Teju<-Teju_df %>%
+  dplyr::select(x_, y_, timestamp, id)
+Tomi<-Tomi_df %>%
+  dplyr::select(x_, y_, timestamp, id)
+Wodan<-Wodan_df %>%
+  dplyr::select(x_, y_, timestamp, id)
+
+# duplicates timestamps are keeping us from creating tracks
+
+# do the same with Chili just for consistency
+C <- rle(as.numeric(Chili$timestamp))$lengths
+C
+# [1] 1 1 1
+
+to.add <- sequence(C) - 1
+to.add
+# [1] 0 0 0  
+
+# add one second to avoid duplicates between GPS points and long call locations
+
+Chili$time <- Chili$timestamp + as.difftime(to.add, unit = "secs")
+
+# Henk
+h <- rle(as.numeric(Henk$timestamp))$lengths
+h
+# [1] 1 1 3
+
+to.add <- sequence(h) - 1
+to.add
+# [1] 0 0 0 1 
+
+# add one second to avoid duplicates between GPS points and long call locations
+
+Henk$time <- Henk$timestamp + as.difftime(to.add, unit = "secs")
+
+# Niko
+
+N <- rle(as.numeric(Niko$timestamp))$lengths
+N
+to.add <- sequence(N) - 1
+to.add
+Niko$time <- Niko$timestamp + as.difftime(to.add, unit = "secs")
+
+# Teju
+
+Te <- rle(as.numeric(Teju$timestamp))$lengths
+Te
+to.add <- sequence(Te) - 1
+to.add
+Teju$time <- Teju$timestamp + as.difftime(to.add, unit = "secs")
+
+# Tomi
+
+To <- rle(as.numeric(Tomi$timestamp))$lengths
+To
+to.add <- sequence(To) - 1
+to.add
+Tomi$time <- Tomi$timestamp + as.difftime(to.add, unit = "secs")
+
+# Wodan
+
+W <- rle(as.numeric(Wodan$timestamp))$lengths
+W
+to.add <- sequence(W) - 1
+to.add
+Wodan$time <- Wodan$timestamp + as.difftime(to.add, unit = "secs")
+
+# select out the non-duplicated timepoints
+Chili1<-LC_Chili %>%
+  dplyr::select(x_, y_, time)
+Henk1<-LC_Henk %>%
+  dplyr::select(x_, y_, time)
+Niko1<-LC_Niko %>%
+  dplyr::select(x_, y_, time)
+Teju1<-LC_Teju %>%
+  dplyr::select(x_, y_, time)
+Tomi1<-LC_Tomi %>%
+  dplyr::select(x_, y_, time)
+Wodan1<-LC_wodan %>%
+  dplyr::select(x_, y_, time)
+
+
+library(amt)
+#' Next we create tracks, 
+Chili_track <- Chili %>% make_track(x_, y_, .t=time, id = id, crs = CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south"))
+Henk_track <- Henk %>% make_track(x_, y_, .t=time, id = id, crs = CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south"))
+Niko_track <- Niko %>% make_track(x_, y_, .t=time, id = id, crs = CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south"))
+Teju_track <- Teju %>% make_track(x_, y_, .t=time, id = id, crs = CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south"))
+Tomi_track <- Tomi %>% make_track(x_, y_, .t=time, id=id, crs = CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south"))
+Wodan_track <- Wodan %>% make_track(x_, y_, .t=time, crs=CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south"))
+
+# long calling distributions, minus the focal individual
+LC_Chili_track <- Chili1 %>% make_track(x_, y_, .t=time,  crs = CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south"))
+LC_Henk_track <- Henk1 %>% make_track(x_, y_, .t=time,  crs = CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south"))
+LC_Niko_track <- Niko1 %>% make_track(x_, y_, .t=time,  crs = CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south"))
+LC_Teju_track <- Teju1 %>% make_track(x_, y_, .t=time,  crs = CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south"))
+LC_Tomi_track <- Tomi1 %>% make_track(x_, y_, .t=time,  crs = CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south"))
+LC_Wodan_track <- Wodan1 %>% make_track(x_, y_, .t=time, crs=CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south"))
+
+
+#' ## Estimating the occurrence distribution (OD)
+#' 
+#' In order to estimate an OD, we will have to provide a template raster (i.e., the raster on which the OD is projected). We use the function `bbox` to create an extent of the template raster and give it a resolution of 1.
+library(raster)
+Tuanan_r<-raster()
+extent(Tuanan_r)<-extent(212812, 219348, 9758957, 9773670)
+res(Tuanan_r)<-25
+projection(Tuanan_r) <- "+init=epsg:32750 +proj=utm +zone=50 +units=m +south"
+
+
+#' Next, we want to estimate an OD for a rolling window of half a day's worth of time steps and create a raster stack. 
+# average number of long calls picked up per day is 28
+Chili_LC_roll <- rolling_od(LC_Chili_track, Tuanan_r, model=fit_ctmm(Chili_track,"bm"), n.points=30, show.progress = TRUE)
+Henk_LC_roll <- rolling_od(LC_Henk_track, Tuanan_r, model=fit_ctmm(Henk_track,"bm"), n.points=30, show.progress = TRUE)
+Niko_LC_roll <- rolling_od(LC_Niko_track, Tuanan_r, model=fit_ctmm(Niko_track,"bm"), n.points=30, show.progress = TRUE)
+Teju_LC_roll <- rolling_od(LC_Teju_track, Tuanan_r, model=fit_ctmm(Teju_track,"bm"), n.points=30, show.progress = TRUE)
+Tomi_LC_roll <- amt::rolling_od(LC_Tomi_track,trast=Tuanan_r, model=fit_ctmm(Tomi_track,"bm"),  n.points=30, show.progress = TRUE)
+Wodan_LC_roll <- amt::rolling_od(LC_Wodan_track, Tuanan_r, model=fit_ctmm(Wodan_track,"bm"), n.points=30, show.progress = TRUE)
+
+
+memory.limit(size=50000)
+traceback()
+plot(LC_od_roll@layers[[4]])
+View(LC_od_roll@layers)
+View(LC_od_roll@layers[[35]])
+save(Chili_LC_roll, file="Chili_LC_roll.Rdata")
+save(Henk_LC_roll, file="Henk_LC_roll.Rdata")
+save(Niko_LC_roll, file="Niko_LC_roll.Rdata")
+save(Teju_LC_roll, file="Teju_LC_roll.Rdata")
+save(Tomi_LC_roll, file="Tomi_LC_roll.Rdata")
+save(Wodan_LC_roll, file="Wodan_LC_roll.Rdata")
+
+# for reloading:
+load(file="Chili_LC_roll.Rdata")
+load(file="Henk_LC_roll.Rdata")
+load(file="Niko_LC_roll.Rdata")
+load(file="Teju_LC_roll.Rdata")
+load(file="Tomi_LC_roll.Rdata")
+load(file="Wodan_LC_roll.Rdata")
+
+Chili_LC_roll
+
+Chili_LC1 <- Chili_track %>% 
+  amt::extract_covariates_var_time(Chili_LC_roll , max_time = minutes(720), when = "before",
+                                  name_covar = "LC_comp")
+
+
+Chili_<-cbind(Chili_LC1, Chili_df)
+
+write.csv(Chili_, file="Chili_.csv")
+
+# Henk
+
+
+Henk_LC1 <- Henk_track %>% 
+  amt::extract_covariates_var_time(Henk_LC_roll , max_time = minutes(720), when = "before",
+                                   name_covar = "LC_comp")
+
+
+Henk_<-cbind(Henk_LC1, Henk_df)
+
+write.csv(Henk_, file="Henk_.csv")
+# Niko
+
+Niko_LC1<- Niko_track %>% 
+  amt::extract_covariates_var_time(Niko_LC_roll , max_time = minutes(720), when = "before",
+                                   name_covar = "LC_comp")
+
+# bind the columns to one dataframe
+
+Niko_<-cbind(Niko_LC1, Niko_df)
+
+write.csv(Niko_, file="Niko_.csv")
+#Teju
+
+Teju_LC1 <- Teju_track %>% 
+  amt::extract_covariates_var_time(Teju_LC_roll , max_time = minutes(720), when = "before",
+                                   name_covar = "LC_comp")
+
+Teju_<-cbind(Teju_LC1, Teju_df)
+write.csv(Teju_, file="Teju_.csv")
+
+# Tomi
+
+Tomi_LC1 <- Tomi_track %>% 
+  amt::extract_covariates_var_time(Tomi_LC_roll , max_time = minutes(720), when = "before",
+                                   name_covar = "LC_comp")
+
+Tomi_<-cbind(Tomi_LC1, Tomi_df)
+write.csv(Tomi_, file="Tomi_.csv")
+
+
+# Wodan
+
+Wodan_LC1 <- Wodan_track %>% 
+  amt::extract_covariates_var_time(Wodan_LC_roll , max_time = minutes(720), when = "before",
+                                   name_covar = "LC_comp")
+
+
+Wodan_<-cbind(Wodan_LC1, Wodan_df)
+str(Wodan_)
+write.csv(Wodan_, file="Wodan_.csv")
+
+
+# for rasters based on individual familiarity and/or the odds of encountering females
+# load occurrence distributions for individuals
+
+load(file="LCH_od.Rdata")
+
+login <- movebankLogin(username="llabarge", password="Samango1992!")
+
+orang_occur <- getMovebankData(study="GPS data, Long Call project, Bornean orangutans, Tuanan (2010-2012)", login=login)
+
+# create as.telemetry object for ctmm models
+orang_tel<-as.telemetry(orang_occur, projection = "+init=epsg:32750 +proj=utm +zone=50 +units=m +south")
+
+# semivariograms to assess range residency
+SVF <- list()
+for(i in 1:length(orang_tel)){
+  print(i)
+  SVF[[i]] <- variogram(orang_tel[[i]])}
+names(SVF) <- names(orang_tel)
+
+# fit the models to each, then ODs
+OD.FIT <- list()
+for(i in 1:length(orang_tel)){
+  print(i)
+  OD.GUESS <- ctmm.guess(orang_tel[[i]],CTMM=ctmm(error = 15, range=FALSE), interactive=FALSE)
+  OD.FIT[[i]] <- ctmm.select(orang_tel[[i]],OD.GUESS, verbose=TRUE,trace=2)
+}
+
+names(OD.FIT) <- names(orang_tel)
+
+orangs_od <- list()
+for(i in 1:length(orang_tel)){
+  print(i)
+  orangs_od[[i]] <- occurrence(orang_tel[[i]],OD.FIT[[i]][[1]])}
+
+names(orangs_od) <- names(orang_tel)
+
+save(orangs_od, file="orangs_od.Rdata")
+
+# linear stretch to make the ODs more intrepretable
+library(raster)
+Chili_rast<-raster(orangs_od[["Chili"]] , DF="PDF")
+Chili_rast<-raster.transformation(Chili_rast, trans = "stretch", smin = 0, smax = 1)
+Henk_rast<-raster(orangs_od[["Henk"]] , DF="PDF")
+Henk_rast<-raster.transformation(Henk_rast, trans = "stretch", smin = 0, smax = 1)
+Niko_rast<-raster(orangs_od[["Niko"]] , DF="PDF")
+Niko_rast<-raster.transformation(Niko_rast, trans = "stretch", smin = 0, smax = 1)
+Teju_rast<-raster(orangs_od[["Teju"]] , DF="PDF")
+Teju_rast<-raster.transformation(Teju_rast, trans = "stretch", smin = 0, smax = 1)
+Tomi_rast<-raster(orangs_od[["Tomi"]] , DF="PDF")
+Tomi_rast<-raster.transformation(Tomi_rast, trans = "stretch", smin = 0, smax = 1)
+Wodan_rast<-raster(orangs_od[["Wodan"]] , DF="PDF")
+Wodan_rast<-raster.transformation(Wodan_rast, trans = "stretch", smin = 0, smax = 1)
+Juni_rast<-raster(orangs_od[["Juni"]] , DF="PDF")
+Juni_rast<-raster.transformation(Juni_rast, trans = "stretch", smin = 0, smax = 1)
+Inul_rast<-raster(orangs_od[["Inul"]] , DF="PDF")
+Inul_rast<-raster.transformation(Inul_rast, trans = "stretch", smin = 0, smax = 1)
+Kerry_rast<-raster(orangs_od[["Kerry"]] , DF="PDF")
+Kerry_rast<-raster.transformation(Kerry_rast, trans = "stretch", smin = 0, smax = 1)
+Mindy_rast<-raster(orangs_od[["Mindy"]] , DF="PDF")
+Mindy_rast<-raster.transformation(Mindy_rast, trans = "stretch", smin = 0, smax = 1)
+
+# select out only variables of interest
+str(Henk_)
+
+Chili_data <- Chili_ %>% dplyr::select(PT, ID,x,y,timestamp, LC_comp, Association)
+Henk_data <- Henk_ %>% dplyr::select(PT, ID,x,y,timestamp, LC_comp)
+Niko_data <- Niko_ %>% dplyr::select(PT, ID,x,y,timestamp, LC_comp, Association)
+Teju_data <- Teju_ %>% dplyr::select(PT, ID,x,y,timestamp, LC_comp, Association)
+Tomi_data <- Tomi_ %>% dplyr::select(PT, ID,x,y,timestamp, LC_comp, Association)
+Wodan_data <- Wodan_ %>% dplyr::select(PT, ID,x,y,timestamp, LC_comp, Association)
+
+# extract from these rasters and add to dataframe
+
+library(sp)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south") # set the coordinate reference system to extract from rasters
+xy <- Chili_data[,c("x","y")] # create a set of coordinates
+Chili_sp_ <- SpatialPointsDataFrame(coords = xy, data = Chili_data, proj4string = CRS) # create a spatial points dataframe
+Familiarity <- raster::extract(Chili_rast, Chili_data[,c("x", "y")]) # extract from each raster
+Juni1 <- raster::extract(Juni_rast, Chili_data[,c("x", "y")]) # extract from each raster
+Inul1 <- raster::extract(Inul_rast, Chili_data[,c("x", "y")]) # extract from each raster
+Kerry1 <- raster::extract(Kerry_rast, Chili_data[,c("x", "y")]) # extract from each raster
+Mindy1 <- raster::extract(Mindy_rast, Chili_data[,c("x", "y")]) # extract from each raster
+Chili_dt<-cbind(Chili_sp_, Familiarity, Juni1, Inul1, Kerry1, Mindy1) # cbind along with original LCH data
+Chili_dt<-as.data.frame(Chili_dt)
+names(Chili_dt)[8] <- "Familiarity"
+names(Chili_dt)[9] <- "Juni"
+names(Chili_dt)[10] <- "Inul"
+names(Chili_dt)[11] <- "Kerry"
+names(Chili_dt)[12] <- "Mindy"
+str(Chili_dt)
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south") # set the coordinate reference system to extract from rasters
+xy <- Henk_data[,c("x","y")] # create a set of coordinates
+Henk_sp_ <- SpatialPointsDataFrame(coords = xy, data = Henk_data, proj4string = CRS) # create a spatial points dataframe
+Familiarity <- raster::extract(Henk_rast, Henk_data[,c("x", "y")]) # extract from each raster
+Juni1 <- raster::extract(Juni_rast, Henk_data[,c("x", "y")]) # extract from each raster
+Inul1 <- raster::extract(Inul_rast, Henk_data[,c("x", "y")]) # extract from each raster
+Kerry1 <- raster::extract(Kerry_rast, Henk_data[,c("x", "y")]) # extract from each raster
+Mindy1 <- raster::extract(Mindy_rast, Henk_data[,c("x", "y")]) # extract from each raster
+Henk_dt<-cbind(Henk_sp_, Familiarity, Juni1, Inul1, Kerry1, Mindy1) # cbind along with original LCH data
+Henk_dt<-as.data.frame(Henk_dt)
+names(Henk_dt)[7] <- "Familiarity"
+names(Henk_dt)[8] <- "Juni"
+names(Henk_dt)[9] <- "Inul"
+names(Henk_dt)[10] <- "Kerry"
+names(Henk_dt)[11] <- "Mindy"
+str(Henk_dt)
+
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south") # set the coordinate reference system to extract from rasters
+xy <- Niko_data[,c("x","y")] # create a set of coordinates
+Niko_sp_ <- SpatialPointsDataFrame(coords = xy, data = Niko_data, proj4string = CRS) # create a spatial points dataframe
+Familiarity <- raster::extract(Niko_rast, Niko_data[,c("x", "y")]) # extract from each raster
+Juni1 <- raster::extract(Juni_rast, Niko_data[,c("x", "y")]) # extract from each raster
+Inul1 <- raster::extract(Inul_rast, Niko_data[,c("x", "y")]) # extract from each raster
+Kerry1 <- raster::extract(Kerry_rast, Niko_data[,c("x", "y")]) # extract from each raster
+Mindy1 <- raster::extract(Mindy_rast, Niko_data[,c("x", "y")]) # extract from each raster
+Niko_dt<-cbind(Niko_sp_, Familiarity, Juni1, Inul1, Kerry1, Mindy1) # cbind along with original LCH data
+Niko_dt<-as.data.frame(Niko_dt)
+names(Niko_dt)[8] <- "Familiarity"
+names(Niko_dt)[9] <- "Juni"
+names(Niko_dt)[10] <- "Inul"
+names(Niko_dt)[11] <- "Kerry"
+names(Niko_dt)[12] <- "Mindy"
+str(Niko_dt)
+
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south") # set the coordinate reference system to extract from rasters
+xy <- Teju_data[,c("x","y")] # create a set of coordinates
+Teju_sp_ <- SpatialPointsDataFrame(coords = xy, data = Teju_data, proj4string = CRS) # create a spatial points dataframe
+Familiarity <- raster::extract(Teju_rast, Teju_data[,c("x", "y")]) # extract from each raster
+Juni1 <- raster::extract(Juni_rast, Teju_data[,c("x", "y")]) # extract from each raster
+Inul1 <- raster::extract(Inul_rast, Teju_data[,c("x", "y")]) # extract from each raster
+Kerry1 <- raster::extract(Kerry_rast, Teju_data[,c("x", "y")]) # extract from each raster
+Mindy1 <- raster::extract(Mindy_rast, Teju_data[,c("x", "y")]) # extract from each raster
+Teju_dt<-cbind(Teju_sp_, Familiarity, Juni1, Inul1, Kerry1, Mindy1) # cbind along with original LCH data
+Teju_dt<-as.data.frame(Teju_dt)
+names(Teju_dt)[8] <- "Familiarity"
+names(Teju_dt)[9] <- "Juni"
+names(Teju_dt)[10] <- "Inul"
+names(Teju_dt)[11] <- "Kerry"
+names(Teju_dt)[12] <- "Mindy"
+str(Teju_dt)
+
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south") # set the coordinate reference system to extract from rasters
+xy <- Tomi_data[,c("x","y")] # create a set of coordinates
+Tomi_sp_ <- SpatialPointsDataFrame(coords = xy, data = Tomi_data, proj4string = CRS) # create a spatial points dataframe
+Familiarity <- raster::extract(Tomi_rast, Tomi_data[,c("x", "y")]) # extract from each raster
+Juni1 <- raster::extract(Juni_rast, Tomi_data[,c("x", "y")]) # extract from each raster
+Inul1 <- raster::extract(Inul_rast, Tomi_data[,c("x", "y")]) # extract from each raster
+Kerry1 <- raster::extract(Kerry_rast, Tomi_data[,c("x", "y")]) # extract from each raster
+Mindy1 <- raster::extract(Mindy_rast, Tomi_data[,c("x", "y")]) # extract from each raster
+Tomi_dt<-cbind(Tomi_sp_, Familiarity, Juni1, Inul1, Kerry1, Mindy1) # cbind along with original LCH data
+Tomi_dt<-as.data.frame(Tomi_dt)
+names(Tomi_dt)[8] <- "Familiarity"
+names(Tomi_dt)[9] <- "Juni"
+names(Tomi_dt)[10] <- "Inul"
+names(Tomi_dt)[11] <- "Kerry"
+names(Tomi_dt)[12] <- "Mindy"
+str(Tomi_dt)
+
+
+CRS<-CRS("+init=epsg:32750 +proj=utm +zone=50 +units=m +south") # set the coordinate reference system to extract from rasters
+xy <- Wodan_data[,c("x","y")] # create a set of coordinates
+Wodan_sp_ <- SpatialPointsDataFrame(coords = xy, data = Wodan_data, proj4string = CRS) # create a spatial points dataframe
+Familiarity <- raster::extract(Wodan_rast, Wodan_data[,c("x", "y")]) # extract from each raster
+Juni1 <- raster::extract(Juni_rast, Wodan_data[,c("x", "y")]) # extract from each raster
+Inul1 <- raster::extract(Inul_rast, Wodan_data[,c("x", "y")]) # extract from each raster
+Kerry1 <- raster::extract(Kerry_rast, Wodan_data[,c("x", "y")]) # extract from each raster
+Mindy1 <- raster::extract(Mindy_rast, Wodan_data[,c("x", "y")]) # extract from each raster
+Wodan_dt<-cbind(Wodan_sp_, Familiarity, Juni1, Inul1, Kerry1, Mindy1) # cbind along with original LCH data
+Wodan_dt<-as.data.frame(Wodan_dt)
+names(Wodan_dt)[8] <- "Familiarity"
+names(Wodan_dt)[9] <- "Juni"
+names(Wodan_dt)[10] <- "Inul"
+names(Wodan_dt)[11] <- "Kerry"
+names(Wodan_dt)[12] <- "Mindy"
+str(Wodan_dt)
+
+# final dataframes for analysis
+write.csv(Wodan_dt, file="Wodan_dt.csv")
+write.csv(Teju_dt, file="Teju_dt.csv")
+write.csv(Tomi_dt, file="Tomi_dt.csv")
+write.csv(Niko_dt, file="Niko_dt.csv")
+write.csv(Henk_dt, file="Henk_dt.csv")
+write.csv(Chili_dt, file="Chili_dt.csv")

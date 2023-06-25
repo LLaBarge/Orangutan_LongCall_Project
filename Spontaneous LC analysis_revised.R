@@ -216,8 +216,13 @@ setkey(Chili_df, join_time)
 setkey(Chili_Associations, join_time)
 
 # rolling window of an hour around observations
+<<<<<<< HEAD
 one_hour <- 60*60*1 # 60 seconds by 60 minutes by one - for data.table calculation
 Chili_df_Act2<-Chili_Associations[Chili_df, nomatch=0, roll = one_hour]
+=======
+one_hour <- 60*60*1 # 60 seconds by 60 minutes by one - for data.table calculation - weird but that's what data.table requires
+Chili_df_Act2<-Chili_Associations[Chili_df, nomatch=0, roll = -one_hour]
+>>>>>>> 81dbf00ee89dc8da897a5ce16b6946c30cda4300
 View(Chili_df_Act2)
 
 # remove NA
@@ -234,7 +239,11 @@ duplicated(Chili_df$timestamp)
 Chili_df<-Chili_df[!duplicated(Chili_df$timestamp),]
 
 # select only necessary columns
+<<<<<<< HEAD
 Chili_df<-Chili_df[,c("x", "y", "timestamp", "ID","PT", "Party member 2", "Class Focal", "Name Focal", "Party Size")]
+=======
+Chili_df<-Chili_df[,c("x", "y", "timestamp", "ID","PT", "Chili","Henk", "Niko","Otto","Teju","Tomi","Wodan", "Juni","Inul","Kerry", "Mindy","Chili_LC", "Henk_LC","Niko_LC", "Otto_LC", "Teju_LC", "Tomi_LC", "Wodan_LC", "Party member 2", "Class Focal", "Name Focal", "Party Size")]
+>>>>>>> 81dbf00ee89dc8da897a5ce16b6946c30cda4300
 
 Chili_df$Association<-Chili_df$`Party Size`
 
@@ -243,10 +252,49 @@ Chili_df$Association[Chili_df$Association == 1 ] <- 0
 Chili_df$Association[Chili_df$Association >= 2 ] <- 1
 
 
+<<<<<<< HEAD
 # Henk has no associations during data collection in 2012
 
 # Niko
 str(Niko_df)
+=======
+# do the same for Henk
+Henk_Associations <- read_csv("Henk_Associations.csv")
+
+# format time so that timestamps can be matched up for a rolling join
+Henk_Associations$Date<-as.POSIXct(x = as.character(Henk_Associations$Date), format = "%m/%d/%Y")
+Henk_Associations$NewDate<-format(Henk_Associations$Date, "%Y-%m-%d")
+Henk_Associations$Timestamp<-with(Henk_Associations,paste(NewDate,Time,sep=" "),"%Y-%m-%d %H:%M:%S")
+Henk_Associations$Timestamp1<-as.POSIXct(x = as.character(Henk_Associations$Timestamp))
+
+# already ran this script before, but if starting from raw data would need to include this for the long call data
+Henk_df$Timestamp<-as.POSIXct(x = as.character(Henk_df$timestamp))
+
+# set DT for data.table to roll on
+Henk_Associations$DT<-as.numeric(Henk_Associations$Timestamp1)
+Henk_df$DT<-as.numeric(Henk_df$Timestamp)
+
+# set data.table key
+setDT(Henk_Associations)[,join_time:=DT]
+setDT(Henk_df)[, join_time:=DT]
+setkey(Henk_df, join_time)
+setkey(Henk_Associations, join_time)
+
+# rolling window of an hour around observations
+one_hour <- 60*60*1 # 60 seconds by 60 minutes by one - for data.table calculation - weird but that's what data.table requires
+Henk_df_Act2<-Henk_Associations[Henk_df, roll = one_hour]
+
+Henk_df<-Henk_df_Act2[,c("x", "y", "timestamp", "ID","PT", "Chili","Henk", "Niko","Otto","Teju","Tomi","Wodan", "Juni","Inul","Kerry", "Mindy","Chili_LC", "Henk_LC","Niko_LC", "Otto_LC", "Teju_LC", "Tomi_LC", "Wodan_LC", "Party member 2", "Class Focal", "Name Focal", "Party Size")]
+Henk_df$ASC_F<-Henk_df$`Class Focal`
+Henk_df$Asso_Num<-Henk_df$`Party Size`
+Henk_df$Asso_ID<-Henk_df$`Party member 2`
+Henk_df[is.na(Henk_df)] <- 0
+
+View(Henk_df)
+# Henk has no associations during data collection
+
+# Niko
+>>>>>>> 81dbf00ee89dc8da897a5ce16b6946c30cda4300
 Niko_Associations <- read_csv("Niko_Associations.csv")
 
 # format time so that timestamps can be matched up for a rolling join
@@ -272,19 +320,31 @@ setkey(Niko_Associations, join_time)
 one_hour <- 60*60*1 # 60 seconds by 60 minutes by one - for data.table calculation - weird but that's what data.table requires
 Niko_df_Act2<-Niko_Associations[Niko_df, roll = one_hour]
 
+<<<<<<< HEAD
 Niko_df<-Niko_df_Act2[,c("x", "y", "timestamp", "ID","PT", "Party member 2", "Class Focal", "Name Focal", "Party Size")]
+=======
+Niko_df<-Niko_df_Act2[,c("x", "y", "timestamp", "ID","PT", "Chili","Henk", "Niko","Otto","Teju","Tomi","Wodan", "Juni","Inul","Kerry", "Mindy","Chili_LC", "Henk_LC","Niko_LC", "Otto_LC", "Teju_LC", "Tomi_LC", "Wodan_LC", "Party member 2", "Class Focal", "Name Focal", "Party Size")]
+>>>>>>> 81dbf00ee89dc8da897a5ce16b6946c30cda4300
 Niko_df$ASC_F<-Niko_df$`Class Focal`
 Niko_df$Association<-Niko_df$`Party Size`
 Niko_df$Asso_ID<-Niko_df$`Party member 2`
 Niko_df[is.na(Niko_df)] <- 0
 
+<<<<<<< HEAD
 
+=======
+View(Niko_df)
+>>>>>>> 81dbf00ee89dc8da897a5ce16b6946c30cda4300
 # All associations were female - add column of 1 and 0 for whether row is during an association
 # a one or zero for associations
 Niko_df$Association[Niko_df$Association == 1 ] <- 0
 Niko_df$Association[Niko_df$Association >= 2 ] <- 1
 
 # Teju
+<<<<<<< HEAD
+=======
+
+>>>>>>> 81dbf00ee89dc8da897a5ce16b6946c30cda4300
 Teju_Associations <- read_csv("Teju_Associations.csv")
 
 # format time so that timestamps can be matched up for a rolling join
@@ -312,7 +372,14 @@ Teju_df_Act2<-Teju_Associations[Teju_df, roll = one_hour]
 
 # Joined dataframes will contain all the extra rows from the association table
 
+<<<<<<< HEAD
 Teju_df<-Teju_df_Act2[,c("x", "y", "timestamp", "ID","PT", "Party member 2", "Name Focal", "Party Size")]
+=======
+
+
+# View(Teju_df) - no adult male associations (but juv/infant with female)
+Teju_df<-Teju_df_Act2[,c("x", "y", "timestamp", "ID","PT", "Chili","Henk", "Niko","Otto","Teju","Tomi","Wodan", "Juni","Inul","Kerry", "Mindy","Chili_LC", "Henk_LC","Niko_LC", "Otto_LC", "Teju_LC", "Tomi_LC", "Wodan_LC", "Party member 2", "Name Focal", "Party Size")]
+>>>>>>> 81dbf00ee89dc8da897a5ce16b6946c30cda4300
 Teju_df$Association<-Teju_df$`Party Size`
 Teju_df$Asso_ID<-Teju_df$`Party member 2`
 Teju_df[is.na(Teju_df)] <- 0
@@ -351,7 +418,11 @@ one_hour <- 60*60*1 # 60 seconds by 60 minutes by one - for data.table calculati
 Tomi_df_Act2<-Tomi_Associations[Tomi_df, roll = one_hour]
 
 #no adult male associations (but juv/infant with female)
+<<<<<<< HEAD
 Tomi_df<-Tomi_df_Act2[,c("x", "y", "timestamp", "ID","PT",  "Party member 2", "Name Focal", "Party Size")]
+=======
+Tomi_df<-Tomi_df_Act2[,c("x", "y", "timestamp", "ID","PT", "Chili","Henk", "Niko","Otto","Teju","Tomi","Wodan", "Juni","Inul","Kerry", "Mindy","Chili_LC", "Henk_LC","Niko_LC", "Otto_LC", "Teju_LC", "Tomi_LC", "Wodan_LC", "Party member 2", "Name Focal", "Party Size")]
+>>>>>>> 81dbf00ee89dc8da897a5ce16b6946c30cda4300
 Tomi_df$Association<-Tomi_df$`Party Size`
 Tomi_df$Asso_ID<-Tomi_df$`Party member 2`
 Tomi_df[is.na(Tomi_df)] <- 0
@@ -360,7 +431,11 @@ Tomi_df[is.na(Tomi_df)] <- 0
 # a one or zero for associations
 Tomi_df$Association[Tomi_df$Association == 1 ] <- 0
 Tomi_df$Association[Tomi_df$Association >= 2 ] <- 1
+<<<<<<< HEAD
 str(Tomi_df)
+=======
+
+>>>>>>> 81dbf00ee89dc8da897a5ce16b6946c30cda4300
 
 # Wodan
 
@@ -390,7 +465,11 @@ one_hour <- 60*60*1 # 60 seconds by 60 minutes by one - for data.table calculati
 Wodan_df_Act2<-Wodan_Associations[Wodan_df, roll = one_hour]
 
 #no adult male associations (but juv/infant with female)
+<<<<<<< HEAD
 Wodan_df<-Wodan_df_Act2[,c("x", "y", "timestamp", "ID","PT", "Party member 2", "Name Focal", "Party Size")]
+=======
+Wodan_df<-Wodan_df_Act2[,c("x", "y", "timestamp", "ID","PT", "Chili","Henk", "Niko","Otto","Teju","Tomi","Wodan", "Juni","Inul","Kerry", "Mindy","Chili_LC", "Henk_LC","Niko_LC", "Otto_LC", "Teju_LC", "Tomi_LC", "Wodan_LC", "Party member 2", "Name Focal", "Party Size")]
+>>>>>>> 81dbf00ee89dc8da897a5ce16b6946c30cda4300
 Wodan_df$Association<-Wodan_df$`Party Size`
 Wodan_df$Asso_ID<-Wodan_df$`Party member 2`
 Wodan_df[is.na(Wodan_df)] <- 0
@@ -422,6 +501,23 @@ load(file="Tomi_df.csv")
 load(file="Wodan_df.csv")
 
 
+<<<<<<< HEAD
+=======
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+>>>>>>> 81dbf00ee89dc8da897a5ce16b6946c30cda4300
 str(Henk_df)
 # for mapping 
 # select out variables needed by movebank
@@ -465,5 +561,9 @@ LC<-LC[,c("x", "y", "timestamp", "ID")]
 str(LC)
 
 write.csv(LC, "LC_for_plotting.csv")
+<<<<<<< HEAD
 write.csv(GPS, "GPS_LC_for_plotting.csv")
 
+=======
+write.csv(GPS, "GPS_LC_for_plotting.csv")
+>>>>>>> 81dbf00ee89dc8da897a5ce16b6946c30cda4300
